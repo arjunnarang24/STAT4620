@@ -1,0 +1,117 @@
+---
+title: "STAT 4620 Project — Exploratory Data Analysis"
+author: "Daphne Kaur (kaur.443)"
+output: pdf_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, warning = FALSE, message = FALSE)
+```
+
+# 1. Introduction
+This document provides an extended exploratory data analysis (EDA) for the Wage dataset.  
+
+```{r}
+load("Wage_Stat4620_2023.RData")
+Wage <- Wage_Stat4620
+head(Wage)
+```
+
+# 2. Understanding the Data
+
+## 2.1 Dimensions, Structure, and Variable Types
+```{r}
+dim(Wage)
+str(Wage)
+sapply(Wage, class)
+```
+
+## 2.2 Missing Data Overview
+```{r}
+colSums(is.na(Wage))
+mean(is.na(Wage))  # overall missing proportion
+```
+
+If missing values exist, inspect where they occur:
+```{r}
+which(is.na(Wage), arr.ind = TRUE)[1:20, ]
+```
+
+# 3. Summary Statistics
+
+## 3.1 Numerical Variables
+```{r}
+numeric_vars <- names(Wage)[sapply(Wage, is.numeric)]
+summary(Wage[, numeric_vars])
+```
+
+# 4. Exploratory Visualizations
+
+## 4.1 Histograms
+```{r}
+par(mfrow=c(2,3))
+for(v in numeric_vars){
+  hist(Wage[[v]], main=paste("Histogram of", v), xlab=v, col="lightblue")
+}
+par(mfrow=c(1,1))
+```
+
+## 4.2 Density Plots
+```{r}
+par(mfrow=c(2,3))
+for(v in numeric_vars){
+  plot(density(Wage[[v]], na.rm=TRUE), main=paste("Density of", v))
+}
+par(mfrow=c(1,1))
+```
+
+## 4.3 Boxplots for Outliers
+```{r}
+par(mfrow=c(2,3))
+for(v in numeric_vars){
+  boxplot(Wage[[v]], main=paste("Boxplot of", v), col="tan")
+}
+par(mfrow=c(1,1))
+```
+
+## 4.4 Pairwise Relationships (Scatterplot Matrix)
+```{r}
+pairs(Wage[, numeric_vars], pch=20)
+```
+
+## 4.5 Correlation Matrix
+```{r}
+cor_matrix <- cor(Wage[, numeric_vars], use="complete.obs")
+cor_matrix
+```
+
+# 5. Response Variable Exploration (Resp)
+
+## 5.1 Basic Distribution
+```{r}
+hist(Wage$Resp, main="Distribution of Resp", xlab="Resp", col="lightgreen")
+summary(Wage$Resp)
+```
+
+## 5.2 Resp vs Each Numerical Predictor
+```{r}
+par(mfrow=c(2,3))
+for(v in numeric_vars){
+  plot(Wage[[v]], Wage$Resp, pch=19, col="darkblue", 
+       main=paste(v, "vs Resp"), xlab=v, ylab="Resp")
+}
+par(mfrow=c(1,1))
+```
+
+# 6. Checking Linearity (for regression models)
+```{r}
+par(mfrow=c(2,3))
+for(v in numeric_vars){
+  plot(Wage[[v]], Wage$Resp, pch=20, col="black")
+  abline(lm(Resp ~ Wage[[v]], data=Wage), col="red", lwd=2)
+}
+par(mfrow=c(1,1))
+```
+
+
+
