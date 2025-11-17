@@ -1,0 +1,147 @@
+---
+title: "Final Project"
+author: "Charlene Li, Daphne Kaur, Arjun Narang, Samhit Kasichainula"
+date: "2025-12-11"
+output: pdf_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+
+library(dplyr)
+library(corrplot)
+library(ggplot2)
+library(patchwork)
+```
+
+## Data Loading
+```{r}
+# Load the RData file
+load("~/Desktop/STAT 4620/Final project/Wage_Stat4620_2023.RData")
+
+data <- Wage_Stat4620
+```
+## Dataset Structure
+
+Using str(Wage_Stat4620) and summary(Wage_Stat4620), we observe:
+
+* The dataset contains 3000 observations (approximate; replace with your exact number after checking).
+* It includes 11 variables related to workers’ demographics, job characteristics, and wages.
+* Variables appear in the following categories:
+
+Numeric variables:
+
+* age
+* year
+* wage
+* logwage
+* Resp (target variable)
+
+Categorical variables:
+* maritl (marital status)
+* race
+* education
+* region
+* jobclass
+* health
+* health_ins
+
+Observations:
+
+Several variables were loaded as character types and should be converted to factors to ensure proper treatment during modeling. This is typical for datasets derived from surveys or socio-economic records.
+
+## Missing Value Check
+
+```{r}
+colSums(is.na(Wage_Stat4620))
+```
+```{r}
+data %>%
+  mutate(missing = is.na(Resp)) %>%
+  group_by(missing) %>%
+  summarize(across(where(is.numeric), ~mean(.x, na.rm = TRUE)))
+```
+Observations:
+
+* Most variables have 0 missing values.
+* Resp has around 60 missing values.
+* No other variable shows meaningful missingness.
+
+We examined missing values in all variables, with particular focus on the mystery response variable Resp, which was appended to the original Wage dataset for this project. We created an indicator variable identifying whether Resp was missing and compared summary statistics across the missing vs. non-missing groups. All predictors in the dataset (e.g., age, wage, logwage, education, jobclass, etc.) showed very similar mean values between cases where Resp was missing and cases where it was observed. For example:
+
+* Mean age: 42.42 (non-missing) vs. 42.15 (missing)
+* Mean wage: 111.73 (non-missing) vs. 110.65 (missing)
+* Mean logwage: 4.6536 (non-missing) vs. 4.6681 (missing)
+
+
+## Dataset Cleaning
+```{r}
+data_clean <- data %>% filter(!is.na(Resp))
+```
+
+There is no systematic difference between individuals with missing Resp and those with observed Resp. This suggests that the missingness mechanism is likely MCAR (Missing Completely At Random). Because the missingness does not depend on observed variables, removing rows with missing Resp will not bias the analysis.
+
+
+
+## Exploratory Data Analysis
+
+The cleaned dataset contains all original predictors from the Wage dataset, along with the added mystery quantitative response variable, Resp. Predictors include:
+
+* Continuous: age, wage, logwage, year
+* Categorical: education, race, maritl, region, health, health_ins, jobclass
+
+The primary goal of the exploratory analysis is to understand the relationships between these predictors and the response, detect unusual patterns, and identify transformations or modeling strategies that will be useful later.
+
+```{r}
+summary(data_clean)
+```
+Observations:
+
+The Wage dataset (with Resp as the mystery outcome) appears clean, well-behaved, and free of missing values in predictors; the continuous variables show reasonable distributions, categorical variables are appropriately structured, and the response variable is roughly symmetric without extreme outliers, making the dataset suitable for a wide range of regression models.
+
+```{r}
+ggplot(data_clean, aes(x = Resp)) +
+  geom_histogram(aes(y = after_stat(density)), bins = 30, color = "black", fill = "lightblue") +
+  geom_density(color = "red", size = 1) +
+  labs(title = "Histogram and Density of Resp",
+       x = "Resp", y = "Density")
+```
+Observations:
+
+The bimodal pattern suggests that there may be two subgroups in the data with different levels of the response variable. The response is quantitative, so bimodality indicates that simple linear modeling may miss important structure unless these subgroups are accounted for.
+
+
+## Relationships Between Predictors and Response
+
+```{r}
+# Correlation of Continuous Predictors
+numeric_vars <- data_clean %>% select(age, wage, logwage, year, Resp)
+corr_matrix <- cor(numeric_vars, use = "pairwise.complete.obs")
+corrplot(corr_matrix, method = "color", addCoef.col = "black")
+
+
+# Categorical Predictors vs Response
+cat_vars <- c("education", "race", "maritl", "jobclass", "health", "health_ins")
+
+plot_list <- lapply(cat_vars, function(v) {
+  ggplot(data_clean, aes_string(x = v, y = "Resp")) +
+    geom_boxplot(fill = "grey") +
+    labs(title = paste("Resp by", v), x = v, y = "Resp") +
+    theme_minimal()
+})
+
+combined_plot <- plot_list[[1]] + plot_list[[2]] + plot_list[[3]] +
+                 plot_list[[4]] + plot_list[[5]] + plot_list[[6]] +
+                 plot_layout(nrow = 3, ncol = 2)
+combined_plot
+
+```
+Observations:
+
+* wage and logwage are highly correlated.
+* Resp moderately correlates with logwage, age, and wage.
+* year shows weak correlations with Resp.
+* The median Resp values across levels of categorical predictors (education, race, maritl, jobclass, health, health_ins, region) are mostly similar. This suggests that categorical predictors may have smaller effects on Resp, though some variation exists in subsets like education and maritl.
+
+
+
