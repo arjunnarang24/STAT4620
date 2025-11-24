@@ -1,5 +1,5 @@
 ---
-title: "Final Project"
+title: "STAT 4620 Final Project - EDA and Preprocessing"
 author: "Charlene Li, Daphne Kaur, Arjun Narang, Samhit Kasichainula"
 date: "2025-12-11"
 output: pdf_document
