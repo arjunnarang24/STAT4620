@@ -1,0 +1,243 @@
+---
+title: "STAT 4620 Final Project Report"
+author: "Daphne Kaur, Arjun Narang, Charlene Li, and Samhit Kasichainula "
+output: pdf_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = FALSE, message = FALSE, warning = FALSE)
+```
+
+# 1. Introduction
+
+
+  This report demonstrates the application of statistical inference and predictive modeling techniques on a realistic dataset derived from wage and demographic information. Analyzing the relationship between socioeconomic predictors and income is a common application of statistical learning techniques. It presents a complex problem due to the need to model both categorical and continuous variables.The objective of this project is to develop an interpretable statistical model for performing inference on the mystery response variable. This report describes our approach to exploration of the predictors, model construction, parameter tuning, variable selection, and performance evaluation.
+
+
+# 2. Exploratory Data Analysis (EDA)
+
+```{r load-data, include=FALSE}
+load("Wage_Stat4620_2023.RData")
+Wage <- Wage_Stat4620
+head(Wage)
+```
+
+ We begin by pursing understanding of the structure of the dataset through exploratory data analysis. We will summarize the variable types, identify missing values, explore co linearity, evaluate skewness, and visualize key distributions.
+
+## 2.1 Dimensions and Structure
+```{r include=FALSE}
+dim(Wage)
+str(Wage)
+colSums(is.na(Wage))
+summary(Wage)
+```
+  The Wage dataset includes 3000 observations of thirteen variables. There are 60 observations wih a missing Resp value. Those observations will be excluded, making usable 2,940 usable observations. All thirteen variables are summarized in the charts below:
+
+```{R echo=FALSE}  
+library(knitr)
+
+var_summary <- data.frame(
+  Variable = c("year", "age", "maritl", "race", "education", "region",
+               "jobclass", "health", "health_ins", "logwage", "wage", "Resp"),
+  Description = c("Year of observation", 
+                  "Age of worker", 
+                  "Marital status", 
+                  "Race of worker", 
+                  "Highest education level", 
+                  "Region", 
+                  "Job type", 
+                  "Self-reported health status", 
+                  "Health insurance status", 
+                  "Log-transformed wage", 
+                  "Hourly wage", 
+                  "Mystery response variable"),
+  Type = c("Continuous", "Continuous", "Categorical", "Categorical",
+           "Categorical, Ordered", "Categorical", "Categorical", "Categorical",
+           "Categorical, Binary", "Continuous", "Continuous", "Continuous, Response")
+)
+
+kable(var_summary, caption = "Variable Descriptions for Wage Dataset")
+```
+```{r full-summary, echo=FALSE, message=FALSE, warning=FALSE}
+library(dplyr)
+library(knitr)
+
+# Remove the index column
+Wage_clean <- Wage %>% select(-X)
+
+# Numeric variable summary ----
+numeric_summary <- Wage_clean %>%
+  select(where(is.numeric)) %>%
+  summarise(across(
+    everything(),
+    list(
+      Min = min,
+      Median = median,
+      Mean = mean,
+      Max = max
+    ),
+    na.rm = TRUE
+  )) %>%
+  tidyr::pivot_longer(cols = everything(),
+                      names_to = c("Variable", ".value"),
+                      names_sep = "_")
+
+# Correct significant figures
+numeric_summary <- numeric_summary %>%
+  rowwise() %>%
+  mutate(
+    Min = case_when(
+      Variable == "logwage" ~ format(round(Min, 2), nsmall = 2),
+      Variable %in% c("wage", "Resp") ~ format(round(Min, 1), nsmall = 1),
+      TRUE ~ format(round(Min, 0), nsmall = 0)
+    ),
+    Median = case_when(
+      Variable == "logwage" ~ format(round(Median, 2), nsmall = 2),
+      Variable %in% c("wage", "Resp") ~ format(round(Median, 1), nsmall = 1),
+      TRUE ~ format(round(Median, 0), nsmall = 0)
+    ),
+    Mean = case_when(
+      Variable == "logwage" ~ format(round(Mean, 2), nsmall = 2),
+      Variable %in% c("wage", "Resp") ~ format(round(Mean, 1), nsmall = 1),
+      TRUE ~ format(round(Mean, 0), nsmall = 0)
+    ),
+    Max = case_when(
+      Variable == "logwage" ~ format(round(Max, 2), nsmall = 2),
+      Variable %in% c("wage", "Resp") ~ format(round(Max, 1), nsmall = 1),
+      TRUE ~ format(round(Max, 0), nsmall = 0)
+    )
+  )
+
+# Categorical variable modes
+get_mode <- function(x) {
+  ux <- na.omit(unique(x))
+  ux[which.max(tabulate(match(x, ux)))]
+}
+
+categorical_summary <- Wage_clean %>%
+  select(where(is.character) | where(is.factor)) %>%
+  summarise(across(everything(), get_mode)) %>%
+  tidyr::pivot_longer(cols = everything(),
+                      names_to = "Variable",
+                      values_to = "Mode")
+
+# Display tables
+kable(numeric_summary,
+      caption = "Summary Statistics - Numeric Variables")
+
+kable(categorical_summary,
+      caption = "Most Frequent Category - Categorical Variables")
+```
+
+
+
+
+
+
+
+## 2.2 Distributions
+
+Plotting each variable will help us to examine the forms of their distributions, identify skewness and multi-modality. Below are histograms and density plots of the continuous variables. The histograms reveal that age and logwage have approximately normal distributions. This reinforces the summary statistics in the charts from 2.1 which show that in both variables, the mean and median are superimposed. The untransformed wage variable is right skewed as we would expect since a log transformation was chosen for that variable. The response variable appears to be bimodal in the histogram and that is further reinforced by two clearly defined peaks in the density plot. Boxplots show a large number of outliers in the wage variables and the response.Bar charts of the categorical variables reveal that all 3000 observations are from the same region and thus, this variable can be excluded as a useful predictor.
+```{r}
+numeric_vars <- names(Wage)[sapply(Wage, is.numeric)]
+numeric_vars <- numeric_vars[-1]
+par(mfrow=c(2,3))
+for(v in numeric_vars){
+  hist(Wage[[v]], main=paste("Histogram of", v), xlab=v)
+}
+par(mfrow=c(1,1))
+```
+```{r, echo=FALSE}
+par(mfrow=c(2,3))
+for(v in numeric_vars){
+  plot(density(Wage[[v]], na.rm=TRUE), main=paste("Density of", v))
+}
+par(mfrow=c(1,1))
+```
+
+```{r, echo=FALSE}
+par(mfrow=c(2,3))
+for(v in numeric_vars){
+  boxplot(Wage[[v]], main=paste("Boxplot of", v))
+}
+par(mfrow=c(1,1))
+```
+
+```{r echo=FALSE}
+categorical_vars <- names(Wage)[sapply(Wage, function(x) is.character(x) || is.factor(x))]
+
+par(mfrow = c(2, 3))  
+for(v in categorical_vars){
+  barplot(table(Wage[[v]]),main = v,las=2)     
+}
+par(mfrow = c(1, 1))
+```
+
+
+
+## 2.3 Correlation
+
+Next we, need to examine correlation among the variables. Understanding the predictors' relationships with each other will guide us in feature selection. Relationships to the response can guide model selection. We examine the pairs plots and mosaic plots below. The pairs plots reveal a cubic relationship between the wage variables and the response. It also reveals stratification in the relationship between age and response. It is possible that age may explain the bimodality of the response.
+
+```{r, echo=FALSE}
+cor(Wage[, numeric_vars], use="complete.obs")
+pairs(Wage[, numeric_vars], pch=20)
+```
+
+```{r echo=FALSE}
+# Pairwise mosaic plots among categorical predictors
+par(mfrow = c(2, 2))
+for(i in 1:(length(categorical_vars)-1)){
+  for(j in (i+1):length(categorical_vars)){
+    mosaicplot(table(Wage[[categorical_vars[i]]], Wage[[categorical_vars[j]]]),
+               main = paste(categorical_vars[i], "vs", categorical_vars[j]),
+               color = TRUE, las = 2)
+  }
+}
+par(mfrow = c(1, 1))
+
+#  Relationship of each categorical variable with the response
+par(mfrow = c(2, 3))
+for(v in categorical_vars){
+  boxplot(Wage$Resp ~ Wage[[v]],
+          main = paste("Resp by", v),
+          xlab = v, ylab = "Resp",
+          las = 2, cex.names = 0.8)
+  }
+
+par(mfrow = c(1, 1))
+```
+
+
+# 3. Model Building
+
+### 3.1 Train/Test Split
+```{r split}
+set.seed(123)
+n <- nrow(Wage)
+train_index <- sample(seq_len(n), size = 0.7*n)
+train <- Wage[train_index, ]
+test <- Wage[-train_index, ]
+```
+
+### 3.2 Fit Multiple Candidate Models
+(Add linear regression, polynomial models, splines, or others.)
+
+```{r models}
+# Example placeholder:
+# model1 <- lm(Resp ~ ., data=train)
+# summary(model1)
+```
+
+### 3.3 Test Set Evaluation
+```{r test-eval}
+# Example placeholder:
+# preds <- predict(model1, newdata=test)
+# mean((test$Resp - preds)^2)
+```
+
+# 4. Summary and Discussion
+(Write about model comparison, assumptions, limitations, and interpretations.)
+
+# 5. Appendix
+(Optional: extra plots, code, tables.)
