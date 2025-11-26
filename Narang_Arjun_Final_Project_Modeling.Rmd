@@ -8,18 +8,6 @@ output: pdf_document
 ### Load Packages and Data
 
 ```{r}
-library(dplyr)
-library(corrplot)
-library(ggplot2)
-library(patchwork)
-library(MASS)
-library(tibble)    
-library(ggplot2)
-library(boot)
-library(mgcv)
-
-
-
 # Packages
 if (!require("splines")) {
   install.packages("splines")
@@ -30,6 +18,68 @@ if (!require("ISLR2")) {
   install.packages("ISLR2")
   library(ISLR2)
 }
+
+if (!require("dplyr")) {
+  install.packages("dplyr")
+  library(dplyr)
+}
+
+if (!require("corrplot")) {
+  install.packages("corrplot")
+  library(corrplot)
+}
+
+if (!require("ggplot2")) {
+  install.packages("ggplot2")
+  library(ggplot2)
+}
+
+if (!require("patchwork")) {
+  install.packages("patchwork")
+  library(patchwork)
+}
+
+if (!require("MASS")) {
+  install.packages("MASS")
+  library(MASS)
+}
+
+if (!require("tibble")) {
+  install.packages("tibble")
+  library(tibble)
+}
+
+if (!require("boot")) {
+  install.packages("boot")
+  library(boot)
+}
+
+if (!require("mgcv")) {
+  install.packages("mgcv")
+  library(mgcv)
+}
+
+if (!require("car")) {
+  install.packages("car")
+  library(car)
+}
+
+if (!require("tree")) {
+  install.packages("tree")
+  library(tree)
+}
+
+if (!require("randomForest")) {  # for bagging + RF
+  install.packages("randomForest")
+  library(randomForest)
+}
+
+if (!require("gbm")) {           # for boosting
+  install.packages("gbm")
+  library(gbm)
+}
+
+
 ```
 
 
@@ -42,6 +92,7 @@ data <- Wage_Stat4620
 ### Clean Data
 
 ```{r}
+# Get rid of all the N/A response variables
 data_clean <- data %>% filter(!is.na(Resp))
 data <- data_clean
 dim(data)
@@ -58,6 +109,8 @@ data$maritl <- factor(data$maritl,
 ```
 
 
+We aggregate some of the values for maritl since we see a difference in married vs all the other values in the response variable. This will be observed below.
+
 ### EDA Views
 
 ```{r}
@@ -72,7 +125,7 @@ par(mfrow=c(1,1))
 
 
 
-With some preliminary EDA, we can see that the response variable has a bi-modal distribution. Additionally it is slightly skewed to the right. This lack of normality in the distribution would violate most linear models. 
+With some preliminary EDA, we can see that the response variable has a bi-modal distribution. Additionally it is slightly skewed to the right. This lack of normality in the distribution would violate most linear models. This means our modeling will be focusing in on models that allow interaction effects like polynomial model, GAMs, and possibly trees.
 
 ```{r}
 # Categorical Predictors vs Response
@@ -92,6 +145,10 @@ combined_plot
 ```
 
 It seems that the response does vary a bit amongst education, race, and marital status. These will likely be useful in helping us model the response variable. 
+
+
+
+
 
 ```{r}
 pairs(data[, numeric_vars], pch=20)
@@ -152,7 +209,7 @@ age_fig <- (p1 | p2 | p3) /
 age_fig
 ```
 
-Out of all the categorical variables, marital status seems to be the only clear interaction with logWage and age. When modeling we will definietly include that as an interaction and perhaps include education and race as a main effect and see how it performs with the test MSE.
+Out of all the categorical variables, marital status seems to be the only clear interaction with logWage and age. When modeling we will definitely include that as an interaction and perhaps include education and race as a main effect and see how it performs with the test MSE.
 
 
 ### Test/Train Split
@@ -161,7 +218,7 @@ Out of all the categorical variables, marital status seems to be the only clear 
 set.seed(4620)
 
 n <- nrow(data)
-train_size <- round(n * 0.8)
+train_size <- round(n * 0.8) # Create an 80/20 split
 train <- sample(1:n,train_size, replace = FALSE)
 test <- -train
 
@@ -190,6 +247,8 @@ res <- residuals(fit_poly3_int)
 qqnorm(res, main = "Q-Q Plot of Residuals (Polynomial Degree 3)")
 qqline(res, col = "red", lwd = 2)
 ```
+
+We see the response being modeled quite well by the ploynomial, a bit of variability towards the ends of the plot, but we can work to imrpove that as we continue to evaluate variables.
 
 
 ```{r}
@@ -255,6 +314,7 @@ qqnorm(res_age2, main = "Q-Q Plot of Residuals (Age Polynomial Degree 2 with Int
 qqline(res_age2, col = "red", lwd = 2)
 ```
 
+We see the ends of the Q-Q plot being modeled very poorly. This is likely due to the upper elements in Age around 40-50 being underestimated.
 
 
 ```{r}
@@ -292,6 +352,8 @@ ggplot(Wage.test, aes(x = age, y = Resp, color = maritl)) +
 
 ### Final GAM Model
 
+Now that we modeled both logWage and age, we must combine them. The best strategy for this would be to use a GAM that allows for different variables/interactions to explain parts of the variability.
+
 
 ```{r}
 # BASE GAM (no age interaction)
@@ -308,6 +370,14 @@ gam_full_base <- gam(
   Resp ~ 
     s(logwage, by = maritl) + 
     maritl + 
+    s(age, by = maritl), 
+  data = Wage.train
+)
+
+# BASE GAM (no Maritl)
+gam_full_base_test <- gam(
+  Resp ~ 
+    s(logwage, by = maritl) + 
     s(age, by = maritl), 
   data = Wage.train
 )
@@ -376,6 +446,7 @@ gam_full_age_interaction <- gam(
 gam_age_int_models <- list(
   "GAM base (no age interaction)" = gam_base,
   "GAM base" = gam_full_base,
+  "GAM base (no maritl)" = gam_full_base_test,
   "GAM + education"  = gam_full_edu_ageint,
   "GAM + race"       = gam_full_race_ageint,
   "GAM + jobclass"   = gam_full_job_ageint,
@@ -404,4 +475,206 @@ gam_age_int_mse_df
 We see the best Test MSE comes from using all the variables and interactions for marital status and logWage and age.
 
 
+### Cross Validation
+
+Now lets use cross validation to ensure that the best model CV MSE is selected.
+
+```{r}
+
+gam_cv <- function(formula, data, k = 10) {
+  folds <- sample(rep(1:k, length.out = nrow(data)))
+  cv_errors <- numeric(k)
+  
+  for (i in 1:k) {
+    train_data <- data[folds != i, ]
+    test_data  <- data[folds == i, ]
+    
+    model <- gam(formula, data = train_data)
+    preds <- predict(model, newdata = test_data)
+    cv_errors[i] <- mean((test_data$Resp - preds)^2)
+  }
+  
+  mean(cv_errors)
+}
+```
+
+
+```{r}
+cv_base        <- gam_cv(Resp ~ s(logwage, by = maritl) + maritl + s(age, by = maritl), data)
+cv_job         <- gam_cv(Resp ~ s(logwage, by = maritl) + maritl + s(age, by = maritl) + jobclass, data)
+cv_edu_job     <- gam_cv(Resp ~ s(logwage, by = maritl) + maritl + s(age, by = maritl) + education + jobclass, data)
+cv_full        <- gam_cv(Resp ~ s(logwage, by = maritl) + maritl + s(age, by = maritl) + education + race + jobclass, data)
+```
+
+
+```{r}
+cv_results <- data.frame(
+  Model = c("GAM base",
+            "GAM + jobclass",
+            "GAM + edu + jobclass",
+            "GAM FULL"),
+  CV_MSE = c(cv_base, cv_job, cv_edu_job, cv_full)
+)
+
+cv_results
+```
+
+We see through 10-fold cross validation that the Cross Validation MSE is actually lowest when considering interactions with age/logWage with marital status and only including job class.
+
+```{r}
+# Extract residuals from the GAM
+res_gam <- residuals(gam_full_job_ageint)
+
+# Q–Q Plot
+qqnorm(res_gam,
+       main = "Q–Q Plot of Residuals\n(GAM: logwage×maritl + age×maritl + jobclass)",
+       pch = 19, cex = 0.5)
+qqline(res_gam, col = "red", lwd = 2)
+
+```
+
+That being said, we will still likely go with Test MSE as our metric of choice since CV MSE would be more useful in a hyperparameter tuning scenario, which this isn't.
+
+
+```{r}
+# Extract residuals from the GAM
+res_gam <- residuals(gam_full_age_interaction)
+
+# Q–Q Plot
+qqnorm(res_gam,
+       main = "Q–Q Plot of Residuals\n(GAM: logwage×maritl + age×maritl + jobclass + edu + race)",
+       pch = 19, cex = 0.5)
+qqline(res_gam, col = "red", lwd = 2)
+
+```
+
+### Trees, Random Forest, Bagging, and Boosting
+
+#### Variable alteration for tree use
+
+```{r}
+Wage.train <- Wage.train %>% 
+  mutate(across(where(is.character), factor))
+
+Wage.test <- Wage.test %>% 
+  mutate(across(where(is.character), factor))
+
+```
+
+
+#### CART
+
+```{r}
+# Fit full regression tree on training data
+tree_fit <- tree(Resp ~ . -wage, data = Wage.train)
+summary(tree_fit)
+```
+
+
+```{r}
+# Plot full tree
+plot(tree_fit, type = "uniform")
+text(tree_fit, pretty = 0, cex = 0.5)
+```
+
+#### Prune Tree
+
+```{r}
+# Cross-validation to choose tree size
+cv_tree <- cv.tree(tree_fit)     # uses deviance 
+best_size <- cv_tree$size[which.min(cv_tree$dev)]
+
+# Prune to optimal size
+prune_fit <- prune.tree(tree_fit, best = best_size)
+
+plot(prune_fit)
+text(prune_fit, pretty = 0, cex = 0.7)
+```
+
+```{r}
+# Test MSE for pruned tree
+tree_pred <- predict(prune_fit, newdata = Wage.test)
+tree_mse  <- mean((tree_pred - Wage.test$Resp)^2)
+tree_mse
+```
+
+#### Bagging
+
+```{r}
+
+p <- ncol(Wage.train) - 1  # number of predictors (exclude Resp)
+
+bag_fit <- randomForest(
+  Resp ~ .,
+  data       = Wage.train,
+  subset     = NULL,
+  mtry       = p,          # bagging: use ALL predictors at each split
+  importance = TRUE,
+  ntree      = 500         # like Boston example
+)
+
+bag_pred <- predict(bag_fit, newdata = Wage.test)
+bag_mse  <- mean((bag_pred - Wage.test$Resp)^2)
+bag_mse
+
+# Variable importance
+varImpPlot(bag_fit, type = 1, main = "Bagging: Variable Importance")
+```
+
+#### Random Forest
+
+```{r}
+rf_fit <- randomForest(
+  Resp ~ .,
+  data       = Wage.train,
+  importance = TRUE          # so we can plot importance
+  # mtry left as default: p/3 for regression
+)
+
+rf_pred <- predict(rf_fit, newdata = Wage.test)
+rf_mse  <- mean((rf_pred - Wage.test$Resp)^2)
+rf_mse
+
+# Variable importance plot (like notes)
+par(mfrow = c(1,1))
+varImpPlot(rf_fit, type = 1, main = "Random Forest: Variable Importance")
+```
+
+#### Boosting
+
+```{r}
+
+boost_fit <- gbm(
+  Resp ~ .,
+  data              = Wage.train,
+  distribution      = "gaussian",  # regression
+  n.trees           = 500,         # same as Boston example
+  interaction.depth = 2            # tree depth
+  # you could also add cv.folds = 5 to pick n.trees by CV
+)
+
+# Relative influence plot and table
+summary(boost_fit, las = 2)
+
+# Test MSE (using 500 trees)
+boost_pred <- predict(boost_fit, newdata = Wage.test, n.trees = 500)
+boost_mse  <- mean((boost_pred - Wage.test$Resp)^2)
+boost_mse
+```
+
+
+
+
+```{r}
+tree_results <- data.frame(
+  Model    = c("Pruned Tree", "Bagging", "Random Forest", "Boosting"),
+  Test_MSE = c(tree_mse, bag_mse, rf_mse, boost_mse)
+)
+
+tree_results[order(tree_results$Test_MSE), ]
+
+```
+
+
+We can see that none of these tree based methods come close in approaching the GAM's Test MSE.
 
