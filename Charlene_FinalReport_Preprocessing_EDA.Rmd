@@ -375,4 +375,3 @@ interaction_table <- data.frame(
 kable(interaction_table, caption = "ANOVA Interaction Summary") %>%
   kable_styling(full_width = FALSE, font_size = 9)
 ```
-
