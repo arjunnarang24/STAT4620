@@ -1,0 +1,377 @@
+---
+title: "STAT 4620 Final Project Report"
+author: "Daphne Kaur, Arjun Narang, Charlene Li, and Samhit Kasichainula"
+output: pdf_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+
+library(dplyr)
+library(corrplot)
+library(ggplot2)
+library(patchwork)
+```
+
+
+```{R echo=FALSE}  
+# Data Loading
+load("~/Desktop/STAT 4620/Final project/Wage_Stat4620_2023.RData")
+data <- Wage_Stat4620
+```
+
+
+# 1. Introduction
+
+Our goal is to model the relationship between workers’ wages and a set of demographic and labor-market characteristics using the Wage dataset from the ISLR package. Understanding how factors such as age, education, job classification, year, and marital status contribute to wage outcomes is important for both labor economics research and practical workforce planning. The objective is to identify a model that is both interpretable and well-supported by the data, and to summarize insights about which variables most strongly influence wages and how these effects behave across demographic groups.
+
+
+# 2. Data Description and Cleaning
+
+## 2.1 Dataset Structure
+
+The Wage dataset includes 3000 observations with 13 variables. Table 1 shows the description and measurement type for each variable.
+```{r echo=FALSE, message=FALSE, warning=FALSE}
+library(knitr)
+library(kableExtra)
+
+var_summary <- data.frame(
+  Variable = c("X", "year", "age", "maritl", "race", "education", "region",
+               "jobclass", "health", "health_ins", "logwage", "wage", "Resp"),
+  Description = c("Respondent ID (unique identifier)", 
+                  "Year that wage information was recorded", 
+                  "Age of worker", 
+                  "Marital status: 1. Never Married, 2. Married, 3. Widowed, 4. Divorced, 5. Separated", 
+                  "Race of worker: 1. White, 2. Black, 3. Asian,  4. Other", 
+                  "Highest education level: 1. < HS Grad, 2. HS Grad, 3. Some College, 4. College Grad, 5. Advanced Degree", 
+                  "Region of country (mid-atlantic only)", 
+                  "Job class: 1. Industrial, 2. Information", 
+                  "Self-reported health status: 1. <=Good, 2. >=Very Good ", 
+                  "Health insurance status: 1. Yes, 2. No", 
+                  "Log-transformed workers wage", 
+                  "Workers raw wage", 
+                  "Mystery response variable"),
+  Type = c("Numerical: Discrete",
+           "Numerical: Discrete", "Numerical: Discrete", "Categorical: Nominal", "Categorical: Nominal",
+           "Categorical: Ordinal", "Categorical: Nominal", "Categorical: Nominal", "Categorical: Ordinal",
+           "Categorical: Binary", "Numerical: Continuous", "Numerical: Continuous", "Numerical: Continuous")
+)
+
+kable(var_summary, caption = "Variable Descriptions for Wage Dataset", booktabs = TRUE, linesep = "") %>%
+  kable_styling(full_width = TRUE, font_size = 7) %>%   # make it wider and smaller
+  column_spec(2, width = "25em", extra_css = "word-wrap: break-word; white-space: normal;") %>% # wider Description
+  column_spec(1, width = "5em") %>%                     # Variable column
+  column_spec(3, width = "7em")                        # Type column
+
+```
+
+
+
+
+## 2.2 Data Cleaning & Preprocessing
+
+All original variables are complete. The appended variable Resp contains missing values. To examine potential bias, we created an indicator variable marking whether Resp was missing. Comparing summary statistics of numerical predictors between missing and non-missing Resp cases showed similar mean values, suggesting that the missingness is likely missing at random (Table 2). Therefore, removing rows with missing Resp will not bias the analysis. We also checked for duplicate rows and found none. Thus, our final cleaned dataset excludes the identifier variable X and all rows with missing Resp.
+
+```{r echo=FALSE, message=FALSE, warning=FALSE}
+library(dplyr)
+library(knitr)
+library(kableExtra)
+
+data %>%
+  mutate(missing = is.na(Resp)) %>%
+  group_by(missing) %>%
+  summarize(across(where(is.numeric), ~round(mean(.x, na.rm = TRUE), 2))) %>%
+  kable(caption = "Mean of Numeric Variables by Missingness of Resp", booktabs = TRUE, linesep = "") %>%
+  kable_styling(full_width = FALSE, font_size = 7) %>%  # smaller font for less vertical space
+  row_spec(0, extra_css = "line-height: 0.9;") %>%      # header row spacing
+  row_spec(1:nrow(data), extra_css = "line-height: 0.9;") # data row spacing
+
+```
+
+```{R echo=FALSE, message=FALSE, warning=FALSE, results='hide'} 
+# Convert categorical variables to factors
+data$maritl <- as.factor(data$maritl)
+data$race <- as.factor(data$race)
+data$education <- as.factor(data$education)
+data$region <- as.factor(data$region)
+data$jobclass <- as.factor(data$jobclass)
+data$health <- as.factor(data$health)
+data$health_ins <- as.factor(data$health_ins)
+
+# Check duplicates
+sum(duplicated(data))
+```
+
+```{R echo=FALSE, message=FALSE, warning=FALSE}  
+data_clean <- data %>%
+  select(-X) %>%
+  filter(!is.na(Resp)) 
+```
+
+
+
+# 3. Exploratory Data Analysis
+
+## 3.1 Summary of Numeric Variables & Categorical Variables
+
+The variable wage shows a wide range, with a median that is lower than the mean, indicating the presence of some high earners. The variable logwage is the logarithmic transformation of wage, which reduces skewness and makes the distribution more symmetric (Table 3). The categorical variables were summarized by their most frequent categories (Table 4).
+
+```{R echo=FALSE, message=FALSE, warning=FALSE} 
+library(tidyr)
+library(dplyr)
+library(knitr)
+library(kableExtra)
+
+# Numeric summary
+numeric_summary <- data_clean %>%
+  select(where(is.numeric)) %>%
+  summarize(across(
+    everything(),
+    list(
+      Min = ~round(min(.x, na.rm = TRUE), 2),
+      Median = ~round(median(.x, na.rm = TRUE), 2),
+      Mean = ~round(mean(.x, na.rm = TRUE), 2),
+      Max = ~round(max(.x, na.rm = TRUE), 2)
+    )
+  ))
+
+# Reshape for reporting
+numeric_summary_t <- numeric_summary %>%
+  pivot_longer(everything(),
+               names_to = c("Variable", "Statistic"),
+               names_sep = "_") %>%
+  pivot_wider(names_from = Statistic, values_from = value)
+
+# Print compact, wider table
+kable(numeric_summary_t, 
+      caption = "Summary Statistics – Numeric Variables", 
+      booktabs = TRUE, 
+      linesep = "",
+      format = "latex") %>%
+  kable_styling(font_size = 7, full_width = TRUE, latex_options = c("hold_position")) %>%
+  column_spec(1, width = "1cm") %>%
+  column_spec(2:5, width = "2.5cm")
+```
+
+```{r echo=FALSE, message=FALSE, warning=FALSE}
+library(dplyr)
+library(knitr)
+library(kableExtra)
+
+# Categorical (mode) summary
+mode_summary <- data_clean %>%
+  select(where(is.factor)) %>%
+  summarise(across(
+    everything(),
+    ~ names(sort(table(.x), decreasing = TRUE))[1]
+  ))
+
+# Reshape for printing
+mode_summary_t <- mode_summary %>%
+  pivot_longer(everything(), names_to = "Variable", values_to = "Most Frequent Category")
+
+# Print compact table
+kable(mode_summary_t, 
+      caption = "Most Frequent Category – Categorical Variables", 
+      booktabs = TRUE, 
+      linesep = "") %>%
+  kable_styling(font_size = 7, latex_options = "scale_down") %>%
+  row_spec(0, extra_css = "line-height: 0.9;") %>%
+  row_spec(1:nrow(mode_summary_t), extra_css = "line-height: 0.9;")
+```
+
+## 3.2 Correlation Analysis
+
+The variables wage and logwage are highly correlated, as expected due to the log transformation. The response variable Resp shows moderate positive correlations with wage, logwage, and age, suggesting that these variables may be influential in predicting Resp. The year variable shows a weak correlation with Resp, indicating limited time-based effects.
+
+```{r echo=FALSE, message=FALSE, warning=FALSE, fig.width=4, fig.height=3}
+library(corrplot)
+library(dplyr)
+
+numeric_vars <- data_clean %>% select(where(is.numeric))
+corr_matrix <- cor(numeric_vars, use = "pairwise.complete.obs")
+corrplot(corr_matrix, 
+         method = "color", 
+         addCoef.col = "black", 
+         tl.cex = 0.6,    
+         number.cex = 0.5, 
+         tl.srt = 45 
+)
+```
+
+## 3.3 Numeric Variables vs Response
+
+From scatterplot matrix, there is a positive, non-linear relationship. Wages tend to increase with age up to around 60, after which they seem to level off or slightly decrease. The variance also appears to increase with age. The plot also confirms that Resp is highly correlated with logwage and wage, and positively related to age. 
+
+When we specifically look at the relationship between Resp and the continuous predictors:
+
+
+* age vs. Resp: The three apparent horizontal lines or clusters are most likely caused by the presence of a strong categorical predictor. A small number of highly influential categories in a predictor variable can create distinct, separated bands in a scatter plot when plotted against any continuous variable (like age).
+* logwage/Wage vs. Resp: The plots are separated into distinct clusters primarily due to the influence of a strong categorical predictor.
+
+```{r echo=FALSE, message=FALSE, warning=FALSE, fig.width=6, fig.height=3}
+numeric_cols <- names(data_clean)[sapply(data_clean, is.numeric)]
+pairs(data_clean[, numeric_cols], pch = 20, cex = 0.3, col = "darkblue")
+```
+
+```{r echo=FALSE, message=FALSE, warning=FALSE, fig.width=8, fig.height=2}
+# 1 row, 5 columns layout
+par(mfrow = c(1, 5),
+    mar = c(3, 3, 2, 1))  # margins: bottom, left, top, right
+
+# Loop over numeric columns and plot vs Resp
+numeric_cols <- colnames(numeric_vars)  # your numeric columns
+
+for(v in numeric_cols) {
+  plot(data_clean[[v]], data_clean$Resp,
+       pch = 19, col = "darkblue",  # small points
+       cex = 0.3,                    # point size
+       main = paste(v, "vs Resp"), 
+       cex.main = 1,                 # title size
+       xlab = v, ylab = "Resp", 
+       cex.lab = 0.9,                # axis label size
+       cex.axis = 0.7)               # axis tick labels size
+}
+```
+
+## 3.4 Categorical Variables vs Response
+
+* education: Shows a strong, positive relationship with the median of Resp. This indicates education is a vital predictor and should be included in your models. The differences between the groups are substantial.
+* maritl (Marital Status): Reveals significant differences, especially between Married individuals (highest median/spread) and others. This also suggests it's a strong predictor.
+* race, health, health_ins: Show weaker relationships with smaller differences in medians, but they still have some predictive value. They should be considered but might not be as impactful as education or marital status.
+* jobclass: Shows almost no difference in the median Resp between 'Industrial' and 'Information' sectors. This suggests jobclass might be a weak predictor or could even be excluded from simpler models.
+* Outlier Identification: The outliers show data points with unusually low or high wages for their respective categories, which may warrant further investigation for potential influential observations.
+
+```{r echo=FALSE, message=FALSE, warning=FALSE, fig.width=8, fig.height=4}
+library(ggplot2)
+library(patchwork)
+
+cat_vars <- c("education", "race", "maritl", "jobclass", "health", "health_ins")
+
+plot_list <- lapply(cat_vars, function(v) {
+  ggplot(data_clean, aes_string(x = v, y = "Resp")) +
+    geom_boxplot(fill = "grey") +
+    labs(title = v, x = v, y = "Resp") +
+    theme_minimal() +
+    theme(plot.title = element_text(size = 6),
+          axis.text.x = element_text(angle = 45, hjust = 1, size = 5),
+          axis.text.y = element_text(size = 5),
+          axis.title = element_text(size = 6))
+})
+wrap_plots(plot_list, nrow = 2, ncol = 3)
+```
+
+## 3.5 Variables interations with Age and Logwage
+
+Based on what we observed, age and logwage seem to be good predictors, so let's try to break them further.
+
+Significant interactions with age:
+
+* age × maritl (VERY strong)
+* age × health
+* age × health_ins
+
+Our interaction analysis shows that the effect of age on the response variable varies significantly by marital status, self-reported health, and health insurance status, with marital status showing the strongest interaction effect.
+
+
+\footnotesize
+```{r echo=FALSE, message=FALSE, warning=FALSE}
+summary(lm(Resp ~ age * education, data = data_clean))
+summary(lm(Resp ~ age * jobclass, data = data_clean))
+summary(lm(Resp ~ age * health, data = data_clean))
+summary(lm(Resp ~ age * maritl, data = data_clean))
+summary(lm(Resp ~ age * health_ins, data = data_clean))
+```
+\normalsize
+
+
+Interaction tests show that logwage interacts strongly with health_insurance status, indicating that the wage–response relationship differs significantly for individuals who lack health insurance. Marital status shows a borderline-significant interaction, suggesting small differences among marital groups. Other variables (education, jobclass, health) do not show meaningful interactions with logwage.
+
+Significant interactions with logwage:
+
+* logwage × health_ins (strongest)
+* logwage × maritl
+
+\footnotesize
+```{r echo=FALSE, message=FALSE, warning=FALSE}
+summary(lm(Resp ~ logwage * education, data = data_clean))
+summary(lm(Resp ~ logwage * jobclass, data = data_clean))
+summary(lm(Resp ~ logwage * health, data = data_clean))
+summary(lm(Resp ~ logwage * maritl, data = data_clean))
+summary(lm(Resp ~ logwage * health_ins, data = data_clean))
+```
+\normalsize
+
+## 3.6 Compare Models With and Without Interaction
+
+The interaction between age and marital status is highly significant (p < 0.001), indicating that the effect of age on Resp depends strongly on marital status. The interactions of age with health and health insurance are also significant (p < 0.01 and p < 0.05), suggesting that the influence of age on Resp varies slightly depending on a person’s health and health insurance status.
+
+```{r echo=FALSE, message=FALSE, warning=FALSE}
+m0 <- lm(Resp ~ age + maritl, data = data_clean)
+m1 <- lm(Resp ~ age * maritl, data = data_clean)
+anova(m0, m1)
+
+m2 <- lm(Resp ~ age + health, data = data_clean)
+m3 <- lm(Resp ~ age * health, data = data_clean)
+anova(m2, m3)
+
+m4 <- lm(Resp ~ age + health_ins, data = data_clean)
+m5 <- lm(Resp ~ age * health_ins, data = data_clean)
+anova(m4, m5)
+```
+
+```{r echo=FALSE, message=FALSE, warning=FALSE}
+library(knitr)
+library(kableExtra)
+
+# Create the table as a data frame
+interaction_table <- data.frame(
+  Interaction = c("age × maritl", "age × health", "age × health_ins"),
+  F = c(69.738, 8.324, 5.570),
+  `p-value` = c("< 2.2e-16", "0.00394", "0.0183"),
+  Interpretation = c(
+    "Highly significant → include interaction",
+    "Significant → interaction matters",
+    "Significant → include interaction"
+  ),
+  check.names = FALSE
+)
+
+# Print table nicely
+kable(interaction_table, caption = "ANOVA Interaction Summary") %>%
+  kable_styling(full_width = FALSE, font_size = 9)
+```
+
+The interaction between logwage and health insurance is highly significant (p < 0.001), meaning the effect of wages on Resp depends substantially on whether someone has health insurance. The interaction between logwage and marital status is barely significant (p = 0.047), suggesting that wages’ effect on Resp may slightly differ across marital status groups.
+
+
+```{r echo=FALSE, message=FALSE, warning=FALSE}
+m0 <- lm(Resp ~ logwage + health_ins, data = data_clean)
+m1 <- lm(Resp ~ logwage * health_ins, data = data_clean)
+anova(m0, m1)
+
+m2 <- lm(Resp ~ logwage + maritl, data = data_clean)
+m3 <- lm(Resp ~ logwage * maritl, data = data_clean)
+anova(m2, m3)
+```
+
+```{r echo=FALSE, message=FALSE, warning=FALSE}
+library(knitr)
+library(kableExtra)
+
+# Create the table as a data frame
+interaction_table <- data.frame(
+  Interaction = c("logwage × health_ins", "logwage × maritl"),
+  F = c(18.858, 2.416),
+  `p-value` = c("1.456e-05", "0.04675"),
+  Interpretation = c(
+    "Interaction significantly improves the model, so you should include it.",
+    "Interaction barely significant, so including it may slightly improve the model."
+  ),
+  check.names = FALSE
+)
+
+# Print table nicely
+kable(interaction_table, caption = "ANOVA Interaction Summary") %>%
+  kable_styling(full_width = FALSE, font_size = 9)
+```
