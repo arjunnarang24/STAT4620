@@ -1,0 +1,367 @@
+---
+title: "STAT 4620 Final Project"
+author: "Samhit Kasichainula"
+date: "`r Sys.Date()`"
+output: pdf_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+Load Libraries
+```{r warning = FALSE, message = FALSE}
+library(tidyverse)
+library(janitor)
+library(GGally)
+library(skimr)
+library(caret)
+library(naniar)
+```
+
+```{r}
+load("Wage_Stat4620_2023.RData")
+Wage <- Wage_Stat4620
+head(Wage)
+summary(Wage)
+# Count NAs per variable
+Wage %>% summarise(across(everything(), ~sum(is.na(.))))
+```
+Convert categorical variables to factors
+```{r}
+cat_vars <- c("maritl", "race", "education",
+              "jobclass", "health", "health_ins")
+
+Wage <- Wage %>%
+  mutate(across(all_of(cat_vars), as.factor)) %>% select(-region)
+
+str(Wage)
+```
+Histograms for all numeric variables
+```{r}
+Wage %>% 
+  select(where(is.numeric)) %>% 
+  pivot_longer(everything()) %>% 
+  ggplot(aes(value)) +
+  geom_histogram(bins = 30, fill = "steelblue") +
+  facet_wrap(~name, scales = "free") +
+  theme_minimal()
+```
+
+Bar plots for all categorical variables
+```{r}
+for (v in cat_vars) {
+  print(
+    Wage %>% 
+      ggplot(aes_string(x = v)) +
+      geom_bar(fill = "skyblue") +
+      theme_minimal() +
+      theme(axis.text.x = element_text(angle = 45, hjust = 1)) +
+      ggtitle(paste("Distribution of", v))
+  )
+}
+```
+Distribution of Resp
+```{r}
+ggplot(Wage, aes(Resp)) +
+  geom_histogram(bins = 30, fill = "darkgreen") +
+  theme_minimal()
+```
+
+Scatterplots of numeric predictors vs Resp
+```{r}
+numeric_vars <- Wage %>% select(where(is.numeric))
+
+numeric_vars %>%
+  pivot_longer(cols = -Resp) %>%
+  ggplot(aes(x = value, y = Resp)) +
+  geom_point(alpha = 0.5) +
+  facet_wrap(~name, scales = "free") +
+  theme_minimal()
+```
+
+Boxplots of categorical predictors vs Resp
+```{r}
+for (v in cat_vars) {
+  print(
+    Wage %>%
+      ggplot(aes(x = .data[[v]], y = Resp)) +
+      geom_boxplot(fill = "steelblue", alpha = 0.7) +
+      theme_minimal() +
+      ggtitle(paste("Resp by", v)) +
+      theme(
+        axis.text.x = element_text(angle = 45, hjust = 1),
+        plot.title = element_text(size = 14, face = "bold")
+      )
+  )
+}
+```
+Correlation matrix
+```{r}
+ggcorr(numeric_vars, label = TRUE)
+```
+Outliers
+```{r}
+numeric_vars %>% 
+  pivot_longer(everything()) %>%
+  ggplot(aes(x = name, y = value)) +
+  geom_boxplot() +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+```
+
+Preprocessing
+```{r}
+Wage_clean <- Wage %>% filter(!is.na(Resp))
+
+train_index <- createDataPartition(Wage_clean$Resp, p = 0.80, list = FALSE)
+
+train <- Wage_clean[train_index, ]
+test  <- Wage_clean[-train_index, ]
+
+dim(train)
+dim(test)
+
+# Final dataset ready for modeling
+head(train)
+```
+
+Modeling
+
+Baseline MLR
+```{r}
+x_train <- train %>% select(-Resp)
+y_train <- train$Resp
+x_test  <- test %>% select(-Resp)
+y_test  <- test$Resp
+
+# Fit full model with all predictors
+lm_fit <- lm(Resp ~ ., data = train)
+
+summary(lm_fit)          # coefficients, significance
+par(mfrow = c(2, 2))
+plot(lm_fit)             # residual diagnostics
+par(mfrow = c(1, 1))
+
+# Test-set performance
+lm_pred <- predict(lm_fit, newdata = test)
+lm_mse  <- mean((y_test - lm_pred)^2)
+lm_mse
+```
+Ridge and LASSO
+```{r}
+library(glmnet)
+
+# Model matrix (handles factors with dummies)
+x_train_mat <- model.matrix(Resp ~ ., data = train)[, -1]
+x_test_mat  <- model.matrix(Resp ~ ., data = test)[, -1]
+
+# Ridge (alpha = 0)
+set.seed(4620)
+ridge_cv <- cv.glmnet(x_train_mat, y_train, alpha = 0)
+ridge_best_lambda <- ridge_cv$lambda.min
+
+ridge_pred <- predict(ridge_cv, s = ridge_best_lambda, newx = x_test_mat)
+ridge_mse  <- mean((y_test - ridge_pred)^2)
+ridge_mse
+
+# LASSO (alpha = 1)
+set.seed(4620)
+lasso_cv <- cv.glmnet(x_train_mat, y_train, alpha = 1)
+lasso_best_lambda <- lasso_cv$lambda.min
+
+lasso_pred <- predict(lasso_cv, s = lasso_best_lambda, newx = x_test_mat)
+lasso_mse  <- mean((y_test - lasso_pred)^2)
+lasso_mse
+
+# Optional: see which variables LASSO keeps
+lasso_coefs <- coef(lasso_cv, s = lasso_best_lambda)
+lasso_coefs
+```
+Regression tree and random forest
+```{r}
+library(rpart)
+library(rpart.plot)
+library(randomForest)
+
+# Regression tree
+tree_fit <- rpart(Resp ~ ., data = train, method = "anova")
+rpart.plot(tree_fit)
+
+tree_pred <- predict(tree_fit, newdata = test)
+tree_mse  <- mean((y_test - tree_pred)^2)
+tree_mse
+
+# Random forest
+set.seed(4620)
+rf_fit <- randomForest(Resp ~ ., data = train,
+                       ntree = 500,
+                       importance = TRUE)
+
+rf_pred <- predict(rf_fit, newdata = test)
+rf_mse  <- mean((y_test - rf_pred)^2)
+rf_mse
+
+importance(rf_fit)
+varImpPlot(rf_fit)
+```
+GAMs
+```{r}
+library(mgcv)
+
+# Quick check of unique values
+sapply(train[, c("age", "year", "logwage")], function(x) length(unique(x)))
+
+set.seed(4620)
+
+# 1) Simple GAM with smooth age only (small k)
+gam1 <- gam(Resp ~ s(age, k = 5), data = train)
+summary(gam1)
+
+gam1_pred <- predict(gam1, newdata = test)
+gam1_mse  <- mean((test$Resp - gam1_pred)^2)
+gam1_mse
+
+# 2) GAM with smooths for age and year, plus factors
+gam2 <- gam(Resp ~ s(age, k = 5) + s(year, k = 5) +
+              maritl + race + education + jobclass + health + health_ins,
+            data = train)
+summary(gam2)
+
+gam2_pred <- predict(gam2, newdata = test)
+gam2_mse  <- mean((test$Resp - gam2_pred)^2)
+gam2_mse
+
+# 3) GAM with smooths for age and logwage
+gam3 <- gam(Resp ~ s(age, k = 5) + s(logwage, k = 5) +
+              maritl + race + education + jobclass + health + health_ins,
+            data = train)
+summary(gam3)
+
+gam3_pred <- predict(gam3, newdata = test)
+gam3_mse  <- mean((test$Resp - gam3_pred)^2)
+gam3_mse
+
+# 4) GAM with smooths for all three numeric predictors (still small k)
+gam4 <- gam(Resp ~ s(age, k = 5) + s(year, k = 5) + s(logwage, k = 5) +
+              maritl + race + education + jobclass + health + health_ins,
+            data = train)
+summary(gam4)
+
+gam4_pred <- predict(gam4, newdata = test)
+gam4_mse  <- mean((test$Resp - gam4_pred)^2)
+gam4_mse
+
+gam_results <- tibble(
+  Model   = c("Linear regression", "GAM age", "GAM age+year+factors",
+              "GAM age+logwage+factors", "GAM age+year+logwage+factors"),
+  Test_MSE = c(lm_mse, gam1_mse, gam2_mse, gam3_mse, gam4_mse)
+) %>%
+  arrange(Test_MSE)
+
+gam_results
+
+```
+
+```{r}
+set.seed(4620)
+
+library(mgcv)
+library(caret)
+
+# candidate GAM formulas (all entries are formulas only)
+gam_forms <- list(
+  gam1  = Resp ~ s(age, k = 5),
+
+  gam2  = Resp ~ s(age, k = 5) + s(year, k = 5) +
+                 maritl + race + education + jobclass + health + health_ins,
+
+  gam3  = Resp ~ s(age, k = 5) + s(logwage, k = 5) +
+                 maritl + race + education + jobclass + health + health_ins,
+
+  gam4  = Resp ~ s(age, k = 5) + s(year, k = 5) + s(logwage, k = 5) +
+                 maritl + race + education + jobclass + health + health_ins,
+
+  gam5  = Resp ~ s(logwage, k = 5) +
+                 maritl + race + education + jobclass + health + health_ins,
+
+  gam6  = Resp ~ s(age, k = 5) + s(year, k = 5) + s(logwage, k = 5) + s(wage, k = 5) +
+                 maritl + race + education + jobclass + health + health_ins,
+
+  # interaction models among numeric predictors
+  gam7  = Resp ~ s(age, k = 5) + s(year, k = 5) + ti(age, year, k = 5) +
+                 maritl + race + education + jobclass + health + health_ins,
+
+  gam8  = Resp ~ s(age, k = 5) + s(logwage, k = 5) + ti(age, logwage, k = 5) +
+                 maritl + race + education + jobclass + health + health_ins,
+
+  gam9  = Resp ~ s(age, k = 5) + s(year, k = 5) + s(logwage, k = 5) + s(wage, k = 5) +
+                 ti(age, logwage, k = 5) + ti(age, year, k = 5) +
+                 maritl + race + education + jobclass + health + health_ins,
+
+  # all pairwise numeric interactions
+  gam10 = Resp ~
+    s(age, k = 5) + s(year, k = 5) + s(logwage, k = 5) + s(wage, k = 5) +
+    ti(age, year,    k = 5) +
+    ti(age, logwage, k = 5) +
+    ti(age, wage,    k = 5) +
+    ti(year, logwage, k = 5) +
+    ti(year, wage,    k = 5) +
+    ti(logwage, wage, k = 5) +
+    maritl + race + education + jobclass + health + health_ins,
+
+  # categorical interactions
+  gam11 = Resp ~
+    s(age, k = 5) + s(year, k = 5) + s(logwage, k = 5) +
+    maritl * education +
+    education * jobclass +
+    race + health + health_ins,
+
+  # varying‑by‑maritl smooths for age and logwage
+  gam12 = Resp ~
+    s(logwage, by = maritl, k = 5) +
+    s(age,      by = maritl, k = 5) +
+    maritl + education + race + jobclass + health + health_ins
+)
+
+K <- 5  # 5-fold CV
+folds <- createFolds(train$Resp, k = K, list = TRUE, returnTrain = FALSE)
+
+cv_results <- tibble(Model = character(), CV_MSE = numeric())
+
+for (m in names(gam_forms)) {
+  form <- gam_forms[[m]]
+  mse_vec <- numeric(K)
+  
+  for (i in seq_along(folds)) {
+    val_idx  <- folds[[i]]
+    train_cv <- train[-val_idx, ]
+    val_cv   <- train[val_idx, ]
+    
+    fit_cv <- gam(form, data = train_cv)
+    pred_cv <- predict(fit_cv, newdata = val_cv)
+    mse_vec[i] <- mean((val_cv$Resp - pred_cv)^2)
+  }
+  
+  cv_results <- cv_results %>%
+    add_row(Model = m, CV_MSE = mean(mse_vec))
+}
+
+cv_results <- cv_results %>% arrange(CV_MSE)
+cv_results
+```
+```{r}
+best_model_name <- cv_results$Model[1]
+best_form <- gam_forms[[best_model_name]]
+best_model_name
+best_form
+
+# Refit on all training data
+gam_best <- gam(best_form, data = train)
+
+# Test-set performance
+gam_best_pred <- predict(gam_best, newdata = test)
+gam_best_mse  <- mean((test$Resp - gam_best_pred)^2)
+gam_best_mse
+```
+
