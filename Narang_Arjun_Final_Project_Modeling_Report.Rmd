@@ -1,0 +1,480 @@
+---
+title: "Arjun Narang Final Project Modeling Report"
+author: "Arjun Narang.37"
+date: "`r Sys.Date()`"
+output: pdf_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+
+set.seed(4620)
+
+# Packages
+if (!require("splines")) {
+  install.packages("splines")
+  library(splines)
+}
+
+if (!require("ISLR2")) {
+  install.packages("ISLR2")
+  library(ISLR2)
+}
+
+if (!require("dplyr")) {
+  install.packages("dplyr")
+  library(dplyr)
+}
+
+if (!require("corrplot")) {
+  install.packages("corrplot")
+  library(corrplot)
+}
+
+if (!require("ggplot2")) {
+  install.packages("ggplot2")
+  library(ggplot2)
+}
+
+if (!require("patchwork")) {
+  install.packages("patchwork")
+  library(patchwork)
+}
+
+if (!require("MASS")) {
+  install.packages("MASS")
+  library(MASS)
+}
+
+if (!require("tibble")) {
+  install.packages("tibble")
+  library(tibble)
+}
+
+if (!require("boot")) {
+  install.packages("boot")
+  library(boot)
+}
+
+if (!require("mgcv")) {
+  install.packages("mgcv")
+  library(mgcv)
+}
+
+if (!require("car")) {
+  install.packages("car")
+  library(car)
+}
+
+if (!require("tree")) {
+  install.packages("tree")
+  library(tree)
+}
+
+if (!require("randomForest")) {  # for bagging + RF
+  install.packages("randomForest")
+  library(randomForest)
+}
+
+if (!require("gbm")) {           # for boosting
+  install.packages("gbm")
+  library(gbm)
+}
+
+if (!require("knitr")) { 
+  install.packages("knitr")
+  library(knitr)
+}
+
+if (!require("kableExtra")) { 
+  install.packages("kableExtra")
+  library(kableExtra)
+}
+```
+
+
+## Objective
+
+The goal of this modeling section is to predict the response variable (Resp) using individual demographic and employment-related characteristics. Preliminary exploratory analysis revealed:
+
+- Nonlinear patterns between Resp and both age and log(wage)
+
+- Bi-modal and right-skewed distribution, violating strict linear model assumptions
+
+- Meaningful interaction between marital status and both age and log(wage)
+
+These findings motivated the use of nonlinear regression approaches including polynomial regression, generalized additive models (GAM), and tree-based ensemble methods.
+
+```{r, include=FALSE}
+load("Wage_Stat4620_2023.RData")
+data <- Wage_Stat4620
+```
+
+## Data Cleaning & Preparation
+
+### Removing N/A Values:
+
+We see 60 N/A values for Resp in the 3000 values of data. We will remove them as they were missing completely at random.
+
+```{r, include=FALSE}
+# Get rid of all the N/A response variables
+data_clean <- data %>% filter(!is.na(Resp))
+data <- data_clean
+```
+
+
+### Recoding Marital Status:
+
+```{r, include = FALSE}
+# Save original copy of marital status to use for plotting
+data$maritl_original <- data$maritl
+
+# Change marital status to married vs not married
+data$maritl <- ifelse(data$maritl == "2. Married","Married", "Not Married")
+data$maritl <- factor(data$maritl,levels = c("Not Married", "Married"))
+```
+
+```{r, echo=FALSE, out.width = "60%", fig.align='center'}
+par(mfrow = c(1,2))
+
+boxplot(Resp ~ maritl_original, data = data,
+        main = "Before Recoding",
+        xlab = "Original Marital Status",
+        ylab = "Resp")
+
+boxplot(Resp ~ maritl, data = data,
+        main = "After Recoding",
+        xlab = "Recoded Marital Status",
+        ylab = "Resp")
+
+par(mfrow = c(1,1))
+```
+
+
+Marital status values were aggregated into Married vs. Not Married to reflect observed differences in Resp.
+
+### Train/Test Split:
+
+To prepare for the modeling phase, we create an 80/20 train/test split.
+
+```{r, include= TRUE}
+n <- nrow(data)
+train_size <- round(n * 0.8) # Create an 80/20 split
+train <- sample(1:n,train_size, replace = FALSE)
+test <- -train
+
+Wage.train <- data[train, ]
+Wage.test  <- data[test, ]
+```
+
+## Understanding Interactions
+
+### Resp vs log(Wage)
+
+```{r,echo = FALSE, out.width = "80%", fig.align='center', message=FALSE, warning=FALSE}
+
+# WITH interaction: one smooth curve, accounting for marital status
+plot_cat <- function(var) {
+  ggplot(data, aes(x = logwage, y = Resp, color = .data[[var]])) +
+    geom_point(alpha = 0.05, size = 0.4) +
+    geom_smooth(method = "loess", se = FALSE, linewidth = 1) +
+    labs(title = paste("Resp vs Logwage by Marital Status"),
+         x = "log(wage)", y = "Resp") +
+    theme_minimal(base_size = 10) +
+    theme(
+      legend.position = "right",
+      plot.title = element_text(hjust = 0.5)   # centers title
+    )
+}
+
+
+logwage_maritl_plot_int <- plot_cat("maritl")
+
+# WITHOUT interaction: one smooth curve, ignoring marital status
+logwage_maritl_plot <- ggplot(data, aes(x = logwage, y = Resp)) +
+  geom_point(alpha = 0.05, size = 0.4) +
+  geom_smooth(method = "loess", se = FALSE, linewidth = 1) +
+  labs(title = "Resp vs logwage",
+       x = "log(wage)", y = "Resp") +
+  theme_minimal(base_size = 10) +
+  theme(
+    plot.title = element_text(hjust = 0.5)
+  )
+
+# Side-by-side comparison
+(logwage_maritl_plot | logwage_maritl_plot_int)
+```
+
+While the model without marital status shows one smooth upward trend, the inclusion of marital status produces two distinct trajectories, especially at higher wage levels, illustrating a meaningful interaction effect.
+
+### Resp vs Age
+
+```{r,echo = FALSE, out.width = "80%", fig.align='center', message=FALSE, warning=FALSE}
+
+# WITH interaction: one smooth curve, accounting marital status
+plot_age_cat <- function(var) {
+  ggplot(data, aes(x = age, y = Resp, color = .data[[var]])) +
+    geom_point(alpha = 0.05, size = 0.4) +
+    geom_smooth(method = "loess", se = FALSE, linewidth = 1) +
+    labs(title = paste("Resp vs Age by Marital Status"),
+         x = "Age", y = "Resp") +
+    theme_minimal(base_size = 10) +
+    theme(legend.position = "right")
+}
+
+age_maritl_plot_int <- plot_age_cat('maritl')
+
+
+# WITHOUT interaction: one smooth curve, ignoring marital status
+age_maritl_plot <- ggplot(data, aes(x = age, y = Resp)) +
+  geom_point(alpha = 0.05, size = 0.4) +
+  geom_smooth(method = "loess", se = FALSE, linewidth = 1) +
+  labs(title = "Resp vs Age",
+       x = "Age", y = "Resp") +
+  theme_minimal(base_size = 10) +
+  theme(
+    plot.title = element_text(hjust = 0.5)
+  )
+
+# Side-by-side comparison
+(age_maritl_plot | age_maritl_plot_int)
+
+```
+
+Including marital status reveals an interaction effect, where married individuals display consistently higher and more rapidly increasing response values across age.
+
+## Modeling Strategy
+
+To evaluate predictive performance and capture the nonlinear and subgroup-dependent patterns observed in the exploratory analysis, multiple modeling approaches were fit in increasing order of flexibility.
+
+### Polynomial Regression:
+
+Polynomial regression was first used as a simple and interpretable way to introduce curvature in the model.
+
+- Captures curvature without fully abandoning linear structure
+- Used as a first benchmark for nonlinearity
+- Fit with and without marital-status interaction terms
+- Helps determine whether interaction effects meaningfully improve model accuracy
+
+### Generalized Addative Models (GAM):
+
+GAMs were implemented to address the limitations of polynomial models by learning smooth, data-driven functions rather than relying on fixed polynomial shapes.
+
+- Allows for smooth functions rather than assuming polynomial shape
+- Supports different smooths by marital status, aligning with observed interaction effects
+- Provides interpretability while modeling nonlinear patterns more accurately
+- Iteratively expanded to include additional categorical predictors (education, race, jobclass)
+
+### Tree Based Methods:
+
+Tree-based approaches were considered to compare parametric models against nonparametric methods capable of automatically detecting interaction structures.
+
+- CART, bagging, random forests, and boosting were tested
+- Automatically capture nonlinearities and interaction structures
+- Useful as a performance benchmark against GAM
+- Less interpretable; performance gain must justify complexity
+
+### Model Evaluation Critera:
+
+Model evaluation focused on predictive performance and stability across validation folds.
+
+- Primary metric: Test Mean Squared Error (MSE) on held-out 20% test sample
+- Secondary: 10-fold cross-validation for GAM to assess stability
+- Considered interpretability when comparing final candidate models
+- Model selection balances accuracy, complexity, and real-world explanation
+
+## Polynomial Regression Results
+
+Polynomial regression models were first fit to establish a baseline nonlinear relationship before combining them to search for the lowest test MSE.
+
+```{r, include = FALSE}
+# log(Wage)
+
+# Fit 3rd degree polynomial using basic polynomial and with interaction effects. And include GAM.
+fit_poly_3 <- lm(Resp ~ poly(logwage, 3), data = Wage.train)
+fit_poly3_int <- lm(Resp ~ poly(logwage, 3) * maritl, data = Wage.train)
+fit_gam_3 <- gam(Resp ~ s(logwage, by = maritl) + maritl, data = Wage.train)
+
+# Age
+# Fit 2nd-degree polynomial using basic, interaction, and GAM for age
+fit_age_poly2     <- lm(Resp ~ poly(age, 2), data = Wage.train)
+fit_age_poly2_int <- lm(Resp ~ poly(age, 2) * maritl, data = Wage.train)
+fit_age_gam       <- gam(Resp ~ s(age, by = maritl) + maritl, data = Wage.train)
+
+# Full model with all categories
+poly_full_model <- lm(
+  Resp ~ poly(logwage, 3) * maritl + poly(age, 2) * maritl,
+  data = Wage.train
+)
+
+# Polynomial for logwage AND age (no interaction effects)
+poly_both_no_int <- lm(
+  Resp ~ poly(logwage, 3) + poly(age, 2),
+  data = Wage.train
+)
+
+
+```
+
+
+```{r, echo = FALSE, warning=FALSE}
+# Degree 3 predictions + MSE
+pred3 <- predict(fit_poly_3, newdata = data[test, ])
+pred3_int <- predict(fit_poly3_int, newdata = data[test, ]) 
+pred_gam_3 <- predict(fit_gam_3, newdata = data[test, ])
+
+# Predictions + MSE for age-based models
+pred_age2      <- predict(fit_age_poly2,     newdata = Wage.test)
+pred_age2_int  <- predict(fit_age_poly2_int, newdata = Wage.test)
+pred_age_gam   <- predict(fit_age_gam,       newdata = Wage.test)
+
+# Predict Full Model
+pred_poly_full  <- predict(poly_full_model, newdata = Wage.test)
+pred_poly_both_no_int <- predict(poly_both_no_int, newdata = Wage.test)
+
+# Calculate the MSE 
+mse3  <- mean((pred3 - data[test, ]$Resp)^2)
+mse3_int <- mean((pred3_int - data[test, ]$Resp)^2)
+mse3_gam <- mean((pred_gam_3 - data[test, ]$Resp)^2)
+
+mse_age2      <- mean((pred_age2     - Wage.test$Resp)^2)
+mse_age2_int  <- mean((pred_age2_int - Wage.test$Resp)^2)
+mse_age2_gam  <- mean((pred_age_gam  - Wage.test$Resp)^2)
+
+mse_poly_full <- mean((pred_poly_full     - Wage.test$Resp)^2)
+mse_poly_both_no_int  <- mean((pred_poly_both_no_int - Wage.test$Resp)^2)
+
+mse_results <- data.frame(
+  Model = c("Age Polynomial (Degree 2)",
+            "log(Wage) Polynomial (Degree 3)",
+            "Age Polynomial (Degree 2) with Marriage Interaction",
+            "log(Wage) Polynomial (Degree 3) with Marriage Interaction",
+            "Age and log(wage) Polynomial (no interaction)",
+            "Age and log(wage) with marital status interaction"),
+  Test_MSE = c(mse_age2,
+               mse3,
+               mse_age2_int,
+               mse3_int,
+               mse_poly_both_no_int,
+               mse_poly_full)
+)
+
+
+kable(mse_results, caption = "log(Wage) and Age Polynomial Test MSE Results") %>%
+  kable_styling(full_width = FALSE)
+
+```
+
+The results show that adding nonlinear terms for both predictors does not improve performance by much unless interaction effects are included, indicating that subgroup differences by marital status drive much of the predictive gain.
+
+
+```{r, echo = FALSE, warning = FALSE, include= FALSE}
+poly_full_all <- lm(
+  Resp ~ 
+    poly(logwage, 3) * maritl +
+    poly(age, 2) * maritl +
+    education + race + jobclass + health + health_ins,
+  data = Wage.train
+)
+
+pred_poly_full_all  <- predict(poly_full_all, newdata = Wage.test)
+
+mse_poly_full_all     <- mean((pred_poly_full_all     - Wage.test$Resp)^2)
+mse_full_all_results <- data.frame(
+  Model    = c("Age and log(wage) with marital status interaction + all other variables"),
+  Test_MSE = c(mse_poly_full_all)
+)
+
+kable(mse_full_all_results, caption = "Full Model Polynomial Regression Test MSE Results") %>%
+  kable_styling(full_width = FALSE)
+
+```
+
+### Introducing Categorical Predictors
+
+In an effort to improve the model's performance, the age and log(Wage) model with interaction effects is set as the baseline. From there various categorical values were tested to gauge an improvement in Test MSE.
+
+```{r, echo = FALSE, warning = FALSE}
+# cat_vars: character vector of categorical variables to consider
+# train, test: your train/test data frames (e.g., Wage.train, Wage.test)
+
+test_poly_subsets <- function(train, test, cat_vars) {
+  
+  base_str <- "Resp ~ poly(logwage, 3) * maritl + poly(age, 2) * maritl"
+  
+  # generate all subsets of cat_vars (including empty set)
+  all_subsets <- unlist(
+    lapply(0:length(cat_vars), function(k) {
+      if (k == 0) {
+        list(character(0))   # empty subset
+      } else {
+        combn(cat_vars, k, simplify = FALSE)
+      }
+    }),
+    recursive = FALSE
+  )
+  
+  results <- data.frame()
+  
+  for (vars in all_subsets) {
+    if (length(vars) == 0) {
+      # base model only
+      formula_str <- base_str
+      label <- "Base: poly(logwage,3)*maritl + poly(age,2)*maritl"
+    } else {
+      added <- paste(vars, collapse = " + ")
+      formula_str <- paste(base_str, "+", added)
+      label <- paste0("Base + ", added)
+    }
+    
+    fml <- as.formula(formula_str)
+    
+    # fit model
+    fit <- lm(fml, data = train)
+    
+    # predict & compute Test MSE
+    preds <- predict(fit, newdata = test)
+    mse   <- mean((test$Resp - preds)^2)
+    
+    results <- rbind(
+      results,
+      data.frame(
+        Model        = label,
+        Test_MSE     = mse,
+        stringsAsFactors = FALSE
+      )
+    )
+  }
+  
+  # sort by Test MSE (best first)
+  results[order(results$Test_MSE), ]
+}
+
+
+cat_vars <- c("education", "race", "jobclass", "health", "health_ins")
+
+poly_subset_results <- test_poly_subsets(
+  train   = Wage.train,
+  test    = Wage.test,
+  cat_vars = cat_vars
+)
+
+
+poly_subset_results %>%
+  arrange(Test_MSE) %>%
+  slice(1:5) %>%
+  kable(
+    caption = "Top 5 Polynomial Models by Test MSE",
+    digits = 3
+  ) %>%
+  kable_styling(full_width = FALSE)
+
+```
+
+
+The top-performing polynomial models all include the full or near-full set of categorical predictors, suggesting that demographic and job-related characteristics contribute additional explanatory value beyond nonlinear age and wage effects.
+
+
+
+
+
