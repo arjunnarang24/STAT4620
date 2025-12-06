@@ -153,11 +153,26 @@ par(mfrow = c(1,1))
 
 Marital status values were aggregated into Married vs. Not Married to reflect observed differences in Resp.
 
+```{r, echo = FALSE, message = FALSE, fig.align='center', warning = FALSE, out.width= "60%"}
+ggplot(data, aes(x = Resp, fill = maritl, color = maritl)) +
+  geom_histogram(position = "identity", alpha = 0.4, bins = 25) +
+  scale_fill_manual(values = c("Not Married" = "#FF9999", "Married" = "#66CCCC")) +
+  scale_color_manual(values = c("Not Married" = "#FF7777", "Married" = "#55BBBB")) +
+  labs(
+    title = "Distribution of Resp by Marital Status",
+    x = "Resp",
+    y = "Count"
+  ) +
+  theme_minimal()
+```
+
+This distinction in marital status also helps define the bimodal distribution observed earlier.
+
 ### Train/Test Split:
 
 To prepare for the modeling phase, we create an 80/20 train/test split.
 
-```{r, include= TRUE}
+```{r, include= FALSE}
 n <- nrow(data)
 train_size <- round(n * 0.8) # Create an 80/20 split
 train <- sample(1:n,train_size, replace = FALSE)
@@ -392,7 +407,7 @@ kable(mse_full_all_results, caption = "Full Model Polynomial Regression Test MSE
 
 ### Introducing Categorical Predictors
 
-In an effort to improve the model's performance, the age and log(Wage) model with interaction effects is set as the baseline. From there various categorical values were tested to gauge an improvement in Test MSE.
+In an effort to improve the model's performance, the age and log(Wage) model with interaction effects is set as the baseline. From there, various categorical values were tested to gauge an improvement in Test MSE.
 
 ```{r, echo = FALSE, warning = FALSE}
 # cat_vars: character vector of categorical variables to consider
@@ -475,6 +490,316 @@ poly_subset_results %>%
 The top-performing polynomial models all include the full or near-full set of categorical predictors, suggesting that demographic and job-related characteristics contribute additional explanatory value beyond nonlinear age and wage effects.
 
 
+
+## Generalized Addative Models (GAM) Results:
+
+A Generalized Additive Model (GAM) was then fit to replicate the baseline structure used in the polynomial models, incorporating log(Wage) and Age along with their interactions with marital status. Unlike polynomial regression, GAM allows the use of smoothing spline functions, enabling a flexible, non-parametric fit that can better capture nonlinear patterns without imposing a fixed global shape.
+
+
+
+```{r, echo = FALSE, warning = FALSE, message = FALSE}
+# Assumes mgcv is loaded: library(mgcv)
+
+# cat_vars: character vector of categorical variables to consider
+# train, test: your train/test data frames (e.g., Wage.train, Wage.test)
+
+test_gam_subsets <- function(train, test, cat_vars) {
+  
+  # Base GAM structure (adjust if you want no age interaction, etc.)
+  base_str <- "Resp ~ s(logwage, by = maritl) + maritl + s(age, by = maritl)"
+  
+  # Generate all subsets of cat_vars (including empty set)
+  all_subsets <- unlist(
+    lapply(0:length(cat_vars), function(k) {
+      if (k == 0) {
+        list(character(0))   # empty subset
+      } else {
+        combn(cat_vars, k, simplify = FALSE)
+      }
+    }),
+    recursive = FALSE
+  )
+  
+  results <- data.frame()
+  
+  for (vars in all_subsets) {
+    if (length(vars) == 0) {
+      # Base GAM only
+      formula_str <- base_str
+      label <- "Base: s(logwage, by=maritl) + maritl + s(age, by=maritl)"
+    } else {
+      added <- paste(vars, collapse = " + ")
+      formula_str <- paste(base_str, "+", added)
+      label <- paste0("Base + ", added)
+    }
+    
+    fml <- as.formula(formula_str)
+    
+    # Fit GAM
+    fit <- gam(fml, data = train)
+    
+    # Predict & compute Test MSE
+    preds <- predict(fit, newdata = test)
+    mse   <- mean((test$Resp - preds)^2)
+    
+    results <- rbind(
+      results,
+      data.frame(
+        Model        = label,
+        Test_MSE     = mse,
+        stringsAsFactors = FALSE
+      )
+    )
+  }
+  
+  # Sort by Test MSE (best first)
+  results[order(results$Test_MSE), ]
+}
+```
+
+
+```{r, echo = FALSE, warning = FALSE, message = FALSE}
+cat_vars <- c("education", "race", "jobclass", "health", "health_ins")
+
+gam_subset_results <- test_gam_subsets(
+  train = Wage.train,
+  test  = Wage.test,
+  cat_vars = cat_vars
+)
+
+gam_subset_results %>%
+  arrange(Test_MSE) %>%
+  slice(1:5) %>%
+  kable(
+    caption = "Top 5 GAM Models by Test MSE",
+    digits = 3
+  ) %>%
+  kable_styling(full_width = FALSE)
+```
+
+
+Similar to polynomial regression, these results suggest that the GAM framework benefits from a full or nearly full list of additional categorical predictors, which enhance predictive accuracy when paired with spline-based nonlinear effects.
+
+### Comparison to Polynomial Regression
+
+Compared to the polynomial regression models, the GAM produced slightly higher Test MSE, likely because its smoother spline-based functions constrain flexibility and introduce bias by not attempting to capture sharp curvature in the data. This slight increase in bias does result in a slightly lower residual variance, as observed in the table below.
+
+```{r, echo = FALSE, include = FALSE, warning = FALSE, message = FALSE}
+# Best GAM with all categorical predictors
+gam_best_full <- gam(
+  Resp ~ 
+    s(logwage, by = maritl) +      # smooth of logwage by marital status
+    maritl +                       # main effect of marital status
+    s(age, by = maritl) +          # smooth of age by marital status
+    education + race + jobclass +  # demographic / occupational covariates
+    health + health_ins,           # health-related covariates
+  data = Wage.train
+)
+
+# Test set predictions and Test MSE
+pred_gam_best_full <- predict(gam_best_full, newdata = Wage.test)
+mse_gam_best_full  <- mean((pred_gam_best_full - Wage.test$Resp)^2)
+```
+
+
+```{r, echo = FALSE, include = FALSE, warning = FALSE, message=FALSE}
+
+# Distinguish best models for comparison
+best_poly <- poly_full_all
+best_gam  <- gam_best_full     
+
+# Residual Variance
+var_poly <- var(residuals(best_poly))
+var_gam  <- var(residuals(best_gam))
+
+variance_compare <- data.frame(
+  Model = c("Best Polynomial", "Best GAM"),
+  Residual_Variance = c(var_poly, var_gam)
+)
+
+variance_compare %>%
+  kable(caption = "Residual Variance Comparison") %>%
+  kable_styling(full_width = FALSE)
+
+```
+
+
+
+```{r, echo = FALSE, warning = FALSE, message = FALSE, include = FALSE}
+
+# ---- POLYNOMIAL DF ----
+n_poly <- nobs(best_poly)
+p_poly <- length(coef(best_poly))
+resid_df_poly <- df.residual(best_poly)
+
+# ---- GAM DF ----
+gam_sum <- summary(best_gam)
+param_df_gam <- length(gam_sum$p.coeff)
+smooth_edf_sum <- sum(gam_sum$edf)
+total_edf_gam <- param_df_gam + smooth_edf_sum
+resid_df_gam <- best_gam$df.residual
+
+# ---- Build DF Table ----
+df_compare <- data.frame(
+  Model = c("Best Polynomial", "Best GAM"),
+  `Parametric DF` = c(p_poly, param_df_gam),
+  `Smooth EDF` = c(0, round(smooth_edf_sum, 2)),
+  `Total Effective DF` = c(p_poly, round(total_edf_gam, 2)),
+  `Residual DF` = c(resid_df_poly, resid_df_gam)
+)
+
+# ---- Fancy Table ----
+kable(df_compare,
+      caption = "Comparison of Degrees of Freedom: Polynomial vs. GAM",
+      digits = 2,
+      align = "c") %>%
+  kable_styling(full_width = FALSE, position = "center")
+
+```
+
+
+
+
+```{r, echo = FALSE, warning = FALSE, message = FALSE}
+# Cross Validation for Polynomial
+poly_cv <- function(formula, data, k = 10) {
+  set.seed(4620)  # optional, for reproducibility
+  folds <- sample(rep(1:k, length.out = nrow(data)))
+  cv_errors <- numeric(k)
+  
+  for (i in 1:k) {
+    # Train/test split for this fold
+    train_data <- droplevels(data[folds != i, ])
+    test_data  <- droplevels(data[folds == i, ])
+    
+    # Fit polynomial model
+    model <- lm(formula, data = train_data)
+    
+    # Predict and compute fold MSE
+    preds <- predict(model, newdata = test_data)
+    cv_errors[i] <- mean((test_data$Resp - preds)^2)
+  }
+  
+  mean(cv_errors)
+}
+
+
+poly_cv_val <- poly_cv(
+  Resp ~ poly(logwage, 3) * maritl +
+         poly(age, 2) * maritl +
+         education + race + jobclass + health + health_ins,
+  data = Wage.train
+)
+
+
+# Cross Validation for GAM
+gam_cv <- gam_cv <- function(model_formula, data, k = 10) {
+  folds <- sample(rep(1:k, length.out = nrow(data)))
+  cv_errors <- numeric(k)
+
+  for (i in 1:k) {
+    train_data <- data[folds != i, ]
+    test_data  <- data[folds == i, ]
+    
+    model <- gam(model_formula, data = train_data)
+    preds <- predict(model, newdata = test_data)
+    cv_errors[i] <- mean((test_data$Resp - preds)^2)
+  }
+  mean(cv_errors)
+}
+
+gam_cv_val <- gam_cv(
+  Resp ~ s(logwage, by = maritl) + maritl + s(age, by = maritl) +
+    education + race + jobclass + health + health_ins,
+  data = Wage.train
+)
+
+```
+
+
+```{r, echo = FALSE, message = FALSE, warning = FALSE, include = FALSE}
+cv_compare <- data.frame(
+  Model = c("Best Polynomial", "Best GAM"),
+  CV_MSE = c(poly_cv_val, gam_cv_val)
+)
+
+cv_compare %>%
+  kable(caption = "Cross Validation Comparison") %>%
+  kable_styling(full_width = FALSE)
+```
+
+```{r, echo = FALSE, message = FALSE, warning = FALSE}
+# Side-by-side comparison of key metrics
+model_compare <- data.frame(
+  Metric = c("Test MSE",
+             "10-fold CV MSE",
+             "Residual Variance",
+             "Total Effective DF"),
+  `Best Polynomial` = c(
+    round(mse_poly_full_all, 3),
+    round(poly_cv_val, 3),
+    round(var_poly, 3),
+    round(p_poly, 2)
+  ),
+  `Best GAM` = c(
+    round(mse_gam_best_full, 3),
+    round(gam_cv_val, 3),
+    round(var_gam, 3),
+    round(total_edf_gam, 2)
+  )
+)
+
+model_compare %>%
+  kable(caption = "Comparison of Best Polynomial and GAM Models") %>%
+  kable_styling(full_width = FALSE, position = "center")
+```
+
+
+The best polynomial model achieves slightly lower test MSE (0.976 vs 0.986) and lower 10-fold CV MSE (1.031 vs 1.056) than the GAM, indicating marginally better out-of-sample performance and stability with fewer effective degrees of freedom (22 vs 31.11). Although the GAM attains a very slightly lower residual variance, this comes at the cost of greater complexity, so the polynomial model offers a better balance of accuracy, parsimony, and interpretability.
+
+
+```{r, echo = FALSE, include = FALSE, warning = FALSE, message=FALSE}
+par(mfrow=c(1,2))
+plot(residuals(best_poly) ~ fitted(best_poly),
+     main="Polynomial Residuals vs Fitted", pch=16, col=rgb(0,0,0,.2))
+abline(h=0, col="red")
+
+plot(residuals(best_gam) ~ fitted(best_gam),
+     main="GAM Residuals vs Fitted", pch=16, col=rgb(0,0,0,.2))
+abline(h=0, col="red")
+```
+
+
+## Tree Based Method Results
+
+Description as to why...
+
+### Include Table Here for 4 Methods
+
+- Test MSE
+- CV MSE
+- Residual Variance
+- Effective Degrees of Freedom
+
+
+Short summary of best one.
+
+### Comparison to Parametric Models 
+
+Explain pros but mostly cons because it doesn't perform as well
+
+
+## Model Evaluation
+
+- Explain how close the polynomial and GAM are in results (compare bias and variance). Lowkey this is basically the section I did above (Summary Comparison of Best Polynomial and GAM Models) so maybe it would be better here -- perhaps a copy paste scenario. You'd have to add the tree results too, just pick the best of the tree methods (boosting I think)
+
+- Looks like Polynomial has the edge in Test MSE and CV MSE. Although it barely loses the variance battle, its effective DF is so much lower than the GAM spline method. 
+
+- Talk about explainability of polynomial method vs others.
+
+- Write out final Model Equation
+
+## Appendix Stuff
 
 
 
