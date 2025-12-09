@@ -1,0 +1,1100 @@
+---
+title: "STAT 4620 Final Project Report"
+author: "Daphne Kaur, Arjun Narang, Charlene Li, and Samhit Kasichainula"
+output: pdf_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+
+library(dplyr)
+library(corrplot)
+library(ggplot2)
+library(patchwork)
+library(mgcv)
+```
+
+
+```{R echo=FALSE}  
+# Data Loading
+load("Wage_Stat4620_2023.RData")
+data <- Wage_Stat4620
+```
+
+
+# 1. Introduction
+
+Our goal is to model the relationship between workers’ wages and a set of demographic and labor-market characteristics using the Wage dataset from the ISLR package. Understanding how factors such as age, education, job classification, year, and marital status contribute to wage outcomes is important for both labor economics research and practical workforce planning. The objective is to identify a model that is both interpretable and well-supported by the data, and to summarize insights about which variables most strongly influence wages and how these effects behave across demographic groups.
+
+
+# 2. Data Description and Cleaning
+
+## 2.1 Dataset Structure
+
+The Wage dataset includes 3000 observations with 13 variables. Table 1 shows the description and measurement type for each variable.
+```{r echo=FALSE, message=FALSE, warning=FALSE}
+library(knitr)
+library(kableExtra)
+
+var_summary <- data.frame(
+  Variable = c("X", "year", "age", "maritl", "race", "education", "region",
+               "jobclass", "health", "health_ins", "logwage", "wage", "Resp"),
+  Description = c("Respondent ID (unique identifier)", 
+                  "Year that wage information was recorded", 
+                  "Age of worker", 
+                  "Marital status: 1. Never Married, 2. Married, 3. Widowed, 4. Divorced, 5. Separated", 
+                  "Race of worker: 1. White, 2. Black, 3. Asian,  4. Other", 
+                  "Highest education level: 1. < HS Grad, 2. HS Grad, 3. Some College, 4. College Grad, 5. Advanced Degree", 
+                  "Region of country (mid-atlantic only)", 
+                  "Job class: 1. Industrial, 2. Information", 
+                  "Self-reported health status: 1. <=Good, 2. >=Very Good ", 
+                  "Health insurance status: 1. Yes, 2. No", 
+                  "Log-transformed workers wage", 
+                  "Workers raw wage", 
+                  "Mystery response variable"),
+  Type = c("Numerical: Discrete",
+           "Numerical: Discrete", "Numerical: Discrete", "Categorical: Nominal", "Categorical: Nominal",
+           "Categorical: Ordinal", "Categorical: Nominal", "Categorical: Nominal", "Categorical: Ordinal",
+           "Categorical: Binary", "Numerical: Continuous", "Numerical: Continuous", "Numerical: Continuous")
+)
+
+kable(var_summary, caption = "Variable Descriptions for Wage Dataset", booktabs = TRUE, linesep = "") %>%
+  kable_styling(full_width = TRUE, font_size = 7) %>%   # make it wider and smaller
+  column_spec(2, width = "25em", extra_css = "word-wrap: break-word; white-space: normal;") %>% # wider Description
+  column_spec(1, width = "5em") %>%                     # Variable column
+  column_spec(3, width = "7em")                        # Type column
+
+```
+
+## 2.2 Data Cleaning & Preprocessing
+
+All original variables are complete. The appended variable Resp contains missing values. To examine potential bias, we created an indicator variable marking whether Resp was missing. Comparing summary statistics of numerical predictors between missing and non-missing Resp cases showed similar mean values, suggesting that the missingness is likely missing at random (Table 2). Therefore, removing rows with missing Resp will not bias the analysis. We also checked for duplicate rows and found none. Thus, our final cleaned dataset excludes the identifier variable X and all rows with missing Resp.
+```{r echo=FALSE, message=FALSE, warning=FALSE}
+library(dplyr)
+library(knitr)
+library(kableExtra)
+
+data %>%
+  mutate(missing = is.na(Resp)) %>%
+  group_by(missing) %>%
+  summarize(across(where(is.numeric), ~round(mean(.x, na.rm = TRUE), 2))) %>%
+  kable(caption = "Mean of Numeric Variables by Missingness of Resp", booktabs = TRUE, linesep = "") %>%
+  kable_styling(full_width = FALSE, font_size = 7) %>%  # smaller font for less vertical space
+  row_spec(0, extra_css = "line-height: 0.9;") %>%      # header row spacing
+  row_spec(1:nrow(data), extra_css = "line-height: 0.9;") # data row spacing
+
+```
+
+```{R echo=FALSE, message=FALSE, warning=FALSE, results='hide'} 
+# Convert categorical variables to factors
+data$maritl <- as.factor(data$maritl)
+data$race <- as.factor(data$race)
+data$education <- as.factor(data$education)
+data$region <- as.factor(data$region)
+data$jobclass <- as.factor(data$jobclass)
+data$health <- as.factor(data$health)
+data$health_ins <- as.factor(data$health_ins)
+
+# Check duplicates
+sum(duplicated(data))
+```
+
+```{R echo=FALSE, message=FALSE, warning=FALSE}  
+data_clean <- data %>%
+  select(-X) %>%
+  filter(!is.na(Resp)) 
+```
+
+## 2.3 Recoding Marital Status (Married vs. Unmarried)
+
+Because the original maritl variable contains five categories (Never Married, Married, Widowed, Divorced, Separated), many of the categories have small counts and their economic interpretation is similar. Additionally, preliminary modeling and exploratory analysis showed that **the primary distinction appears between Married and all other groups**.
+
+Therefore, for all EDA and modeling work moving forward, we create a binary variable:
+
+**married2 = “Married” vs. “Unmarried.”**
+```{R echo=FALSE, message=FALSE, warning=FALSE}  
+data_clean <- data_clean %>%
+  mutate(married2 = ifelse(maritl == "2. Married", "Married", "Unmarried")) %>%
+  mutate(married2 = factor(married2))
+
+```
+
+This recoding makes interpretation easier and will later become important because marital status turns out to be the strongest interaction variable in both EDA and modeling.
+
+# 3. Exploratory Data Analysis
+
+## 3.1 Distribution of the Response Variable (Resp)
+
+Before examining predictors, we examine the shape of the response variable. The histogram below shows that **Resp is clearly bimodal**, with two distinct peaks.
+
+```{R echo=FALSE, message=FALSE, warning=FALSE, fig.width=8, fig.height=4}
+ggplot(data_clean, aes(x = Resp)) +
+  geom_histogram(binwidth = 0.3, fill = "grey", color = "black") +
+  theme_minimal() +
+  labs(title = "Distribution of Resp (Response Variable)",
+        x = "Resp", y = "Count")
+```
+**Interpretation**
+
+The strong **bimodal distribution** suggests that:
+
+* A single linear mean structure may not fully capture the data.
+* Some predictors may shift individuals into one mode or the other, particularly marital status.
+* This helps explain why certain interactions appeared significant under linear modeling but not under more flexible models.
+
+This motivates the later need for polynomial and semi-parametric models.
+
+## 3.2 Summary of Numeric Variables & Categorical Variables
+
+The variable wage shows a wide range, with a median that is lower than the mean, indicating the presence of some high earners. The variable logwage is the logarithmic transformation of wage, which reduces skewness and makes the distribution more symmetric (Table 3). The categorical variables were summarized by their most frequent categories (Table 4).
+```{R echo=FALSE, message=FALSE, warning=FALSE} 
+library(tidyr)
+library(dplyr)
+library(knitr)
+library(kableExtra)
+
+# Numeric summary
+numeric_summary <- data_clean %>%
+  select(where(is.numeric)) %>%
+  summarize(across(
+    everything(),
+    list(
+      Min = ~round(min(.x, na.rm = TRUE), 2),
+      Median = ~round(median(.x, na.rm = TRUE), 2),
+      Mean = ~round(mean(.x, na.rm = TRUE), 2),
+      Max = ~round(max(.x, na.rm = TRUE), 2)
+    )
+  ))
+
+# Reshape for reporting
+numeric_summary_t <- numeric_summary %>%
+  pivot_longer(everything(),
+               names_to = c("Variable", "Statistic"),
+               names_sep = "_") %>%
+  pivot_wider(names_from = Statistic, values_from = value)
+
+# Print compact, wider table
+kable(numeric_summary_t, 
+      caption = "Summary Statistics – Numeric Variables", 
+      booktabs = TRUE, 
+      linesep = "",
+      format = "latex") %>%
+  kable_styling(font_size = 7, full_width = TRUE, latex_options = c("hold_position")) %>%
+  column_spec(1, width = "1cm") %>%
+  column_spec(2:5, width = "2.5cm")
+```
+
+```{r echo=FALSE, message=FALSE, warning=FALSE}
+library(dplyr)
+library(knitr)
+library(kableExtra)
+
+# Categorical (mode) summary
+mode_summary <- data_clean %>%
+  select(where(is.factor)) %>%
+  summarise(across(
+    everything(),
+    ~ names(sort(table(.x), decreasing = TRUE))[1]
+  ))
+
+# Reshape for printing
+mode_summary_t <- mode_summary %>%
+  pivot_longer(everything(), names_to = "Variable", values_to = "Most Frequent Category")
+
+# Print compact table
+kable(mode_summary_t, 
+      caption = "Most Frequent Category – Categorical Variables", 
+      booktabs = TRUE, 
+      linesep = "") %>%
+  kable_styling(font_size = 7, latex_options = "scale_down") %>%
+  row_spec(0, extra_css = "line-height: 0.9;") %>%
+  row_spec(1:nrow(mode_summary_t), extra_css = "line-height: 0.9;")
+```
+
+## 3.3 Correlation Analysis
+
+The variables wage and logwage are highly correlated, as expected due to the log transformation. The response variable Resp shows moderate positive correlations with wage, logwage, and age, suggesting that these variables may be influential in predicting Resp. The year variable shows a weak correlation with Resp, indicating limited time-based effects.
+
+```{r echo=FALSE, message=FALSE, warning=FALSE, fig.width=3, fig.height=2.5}
+library(corrplot)
+library(dplyr)
+
+numeric_vars <- data_clean %>% select(where(is.numeric))
+corr_matrix <- cor(numeric_vars, use = "pairwise.complete.obs")
+corrplot(corr_matrix, 
+         method = "color", 
+         addCoef.col = "black", 
+         tl.cex = 0.6,    
+         number.cex = 0.5, 
+         tl.srt = 45 
+)
+```
+
+## 3.4 Numeric Variables vs Response
+
+From scatterplot matrix, there is a positive, non-linear relationship. Wages tend to increase with age up to around 60, after which they seem to level off or slightly decrease. The variance also appears to increase with age. The plot also confirms that Resp is highly correlated with logwage and wage, and positively related to age. 
+
+When we specifically look at the relationship between Resp and the continuous predictors:
+
+* age vs. Resp: The three apparent horizontal lines or clusters are most likely caused by the presence of a strong categorical predictor. A small number of highly influential categories in a predictor variable can create distinct, separated bands in a scatter plot when plotted against any continuous variable (like age).
+* logwage/Wage vs. Resp: The plots are separated into distinct clusters primarily due to the influence of a strong categorical predictor.
+
+```{r echo=FALSE, message=FALSE, warning=FALSE, fig.width=6, fig.height=3}
+numeric_cols <- names(data_clean)[sapply(data_clean, is.numeric)]
+pairs(data_clean[, numeric_cols], pch = 20, cex = 0.3, col = "darkblue")
+```
+```{r echo=FALSE, message=FALSE, warning=FALSE, fig.width=8, fig.height=2}
+# 1 row, 5 columns layout
+par(mfrow = c(1, 5),
+    mar = c(3, 3, 2, 1))  # margins: bottom, left, top, right
+
+# Loop over numeric columns and plot vs Resp
+numeric_cols <- colnames(numeric_vars)  # your numeric columns
+
+for(v in numeric_cols) {
+  plot(data_clean[[v]], data_clean$Resp,
+       pch = 19, col = "darkblue",  # small points
+       cex = 0.3,                    # point size
+       main = paste(v, "vs Resp"), 
+       cex.main = 1,                 # title size
+       xlab = v, ylab = "Resp", 
+       cex.lab = 0.9,                # axis label size
+       cex.axis = 0.7)               # axis tick labels size
+}
+```
+
+## 3.5 Categorical Variables vs Response
+
+* education: Clear, strong separation between levels. Higher education corresponds to higher Resp.
+* maritl (Married vs Unmarried): This is one of the strongest relationships in the data. Married individuals disproportionately fall into the upper mode of the Resp distribution. This key observation explains the bimodal distribution and motivates the strong reliance on the married2 interaction term in the subsequent modeling sections.
+* race, health, health_ins: These show weaker group separation. Their effects appear smaller and do not meaningfully explain the bimodality of Resp.
+* jobclass: Practically no separation in Resp; likely not an important predictor.
+* Outlier Identification: The outliers show data points with unusually low or high wages for their respective categories, which may warrant further investigation for potential influential observations.
+
+```{r echo=FALSE, message=FALSE, warning=FALSE, fig.width=8, fig.height=4}
+library(ggplot2)
+library(patchwork)
+
+cat_vars <- c("education", "race", "maritl", "jobclass", "health", "health_ins")
+
+plot_list <- lapply(cat_vars, function(v) {
+  ggplot(data_clean, aes_string(x = v, y = "Resp")) +
+    geom_boxplot(fill = "grey") +
+    labs(title = v, x = v, y = "Resp") +
+    theme_minimal() +
+    theme(plot.title = element_text(size = 6),
+          axis.text.x = element_text(angle = 45, hjust = 1, size = 5),
+          axis.text.y = element_text(size = 5),
+          axis.title = element_text(size = 6))
+})
+wrap_plots(plot_list, nrow = 2, ncol = 3)
+```
+```{r echo=FALSE, message=FALSE, warning=FALSE, fig.width=4, fig.height=2}
+ggplot(data_clean, aes(x = married2, y = Resp)) +
+  geom_boxplot(fill = "grey") +
+  theme_minimal() +
+  labs(title = "Resp by Marital Status (married2)",
+        x = "Marital Status", y = "Resp") +
+  theme(
+    plot.title = element_text(size = 8), 
+    axis.title = element_text(size = 7), 
+    axis.text = element_text(size = 6)
+  )
+```
+
+
+## 3.6 Variables interations with Age and Logwage
+
+Our earlier results suggested that both age and logwage are strong predictors of the response variable, so we examined whether their effects vary across different subgroups.
+
+**Interactions with Age**
+
+The interaction tests show clear evidence that the relationship between **age** and the response varies across several demographic and health-related variables. The strongest effect appears in the **age × maritl** interaction, followed by meaningful interactions with **health** and **health_ins**. These findings indicate that the effect of age is not uniform; instead, it depends on an individual’s marital status, health condition, and insurance coverage—especially marital status. (Appendix 1)
+
+Significant interactions with age:
+
+* age × maritl (strongest)
+* age × health
+* age × health_ins
+
+The interaction between age × maritl is highly significant (p < 0.001), confirming that marital status meaningfully alters the age effect on the response. Interactions with health and health_ins are also statistically significant, though to a lesser degree, indicating that age’s effect varies in modest but important ways across these groups. (Appendix 3)
+```{r echo=FALSE, message=FALSE, warning=FALSE}
+library(knitr)
+library(kableExtra)
+
+# Create the table as a data frame
+interaction_table <- data.frame(
+  Interaction = c("age × maritl", "age × health", "age × health_ins"),
+  F = c(69.738, 8.324, 5.570),
+  `p-value` = c("< 2.2e-16", "0.00394", "0.0183"),
+  Interpretation = c(
+    "Highly significant.",
+    "Significant.",
+    "Significant."
+  ),
+  check.names = FALSE
+)
+
+# Print table nicely
+kable(interaction_table, caption = "ANOVA Interaction Summary") %>%
+  kable_styling(full_width = FALSE, font_size = 9)
+```
+
+**Interactions with Logwage**
+
+The interaction analysis for **logwage** shows a different pattern. The strongest and most meaningful interaction is with **health_ins**, indicating that the relationship between wages and the response variable differs considerably between individuals with and without health insurance. Marital status shows a marginally significant interaction, while education, jobclass, and health do not appear to moderate the logwage–response relationship. (Appendix 2)
+
+Significant interactions with logwage:
+
+* logwage × health_ins (strongest)
+* logwage × maritl (marginal)
+
+For logwage, the interaction with health_ins again emerges as highly significant (p < 0.001), showing that the wage effect differs sharply depending on health insurance status. The logwage × maritl interaction is marginally significant (p = 0.047), suggesting that while there may be small differences across marital groups, the effect is weaker. (Appendix 4)
+```{r echo=FALSE, message=FALSE, warning=FALSE}
+library(knitr)
+library(kableExtra)
+
+# Create the table as a data frame
+interaction_table <- data.frame(
+  Interaction = c("logwage × health_ins", "logwage × maritl"),
+  F = c(18.858, 2.416),
+  `p-value` = c("1.456e-05", "0.04675"),
+  Interpretation = c(
+    "Interaction significantly improves the model.",
+    "Interaction barely significant."
+  ),
+  check.names = FALSE
+)
+
+# Print table nicely
+kable(interaction_table, caption = "ANOVA Interaction Summary") %>%
+  kable_styling(full_width = FALSE, font_size = 9)
+```
+
+Our exploratory interaction tests confirmed that the effect of continuous predictors is not uniform. The most critical interaction, which became the cornerstone of our best models, is the one involving marital status.
+
+## 3.8 Understanding Interactions
+
+**Resp vs log(Wage)**
+
+While the model without marital status shows one smooth upward trend, the inclusion of marital status produces two distinct trajectories, especially at higher wage levels, illustrating a meaningful interaction effect.
+```{r, echo=FALSE, fig.width=14, fig.height=4, fig.align='center', message=FALSE, warning=FALSE}
+library(ggplot2)
+library(dplyr)
+library(patchwork) 
+
+# WITHOUT interaction: one smooth curve, ignoring marital status
+logwage_maritl_plot <- ggplot(data_clean, aes(x = logwage, y = Resp)) +
+  geom_point(alpha = 0.05, size = 0.4) +
+  geom_smooth(method = "loess", se = FALSE, linewidth = 1) +
+  labs(title = "Resp vs logwage",
+       x = "log(wage)", y = "Resp") +
+  theme_minimal(base_size = 10) +
+  theme(
+    plot.title = element_text(hjust = 0.5)
+  )
+
+# --- Plotting Function (Re-defined for completeness) ---
+plot_cat <- function(var) {
+  ggplot(data_clean, aes(x = logwage, y = Resp, color = .data[[var]])) +
+    geom_point(alpha = 0.05, size = 0.4) +
+    geom_smooth(method = "loess", se = FALSE, linewidth = 1) +
+    labs(title = paste("Resp vs Logwage by", gsub("_", " ", var)),
+         x = "log(wage)", y = "Resp") +
+    theme_minimal(base_size = 10) +
+    theme(legend.position = "right", plot.title = element_text(hjust = 0.5))
+}
+
+# --- Data Transformation (Creating the Simplified Variable - FIXED) ---
+# Recode based on the numeric factor codes: 2 is 'Married', everything else is 'Not Married'.
+# The creation of the new factor is done in one step to avoid the unused argument error.
+data_clean <- data_clean %>%
+  mutate(
+    # Create the new factor directly
+    maritl_simplified = factor(
+      case_when(
+        as.numeric(maritl) == 2 ~ "Married",
+        TRUE ~ "Not Married" # 1, 3, 4, 5 are grouped here
+      )
+    )
+  )
+
+# --- Original Plot (5-Level Marital Status) ---
+# This is your original plot_cat("maritl")
+logwage_maritl_plot_int_5lvl <- plot_cat("maritl") +
+  labs(title = "5-Level Marital Status") +
+  guides(color = guide_legend(title = "maritl"))
+
+
+# --- New Plot (Simplified 2-Level Marital Status) ---
+logwage_maritl_plot_int_2lvl <- plot_cat("maritl_simplified") +
+  labs(title = "2-Level Marital Status (Married/Not Married)") +
+  guides(color = guide_legend(title = "maritl"))
+
+
+# --- Display Both Charts for Comparison ---
+# Compare the original 5-level plot with the new 2-level plot
+(logwage_maritl_plot | logwage_maritl_plot_int_5lvl | logwage_maritl_plot_int_2lvl)
+```
+
+**Resp vs Age**
+
+Including marital status reveals an interaction effect, where married individuals display consistently higher and more rapidly increasing response values across age.
+```{r, echo=FALSE, fig.width=14, fig.height=4, fig.align='center', message=FALSE, warning=FALSE}
+library(ggplot2)
+library(patchwork)
+# Note: The data manipulation to create 'maritl_simplified' is assumed to have run previously.
+
+# --- Plotting Function (Re-defined for completeness) ---
+plot_age_cat <- function(var) {
+  ggplot(data_clean, aes(x = age, y = Resp, color = .data[[var]])) +
+    geom_point(alpha = 0.05, size = 0.4) +
+    geom_smooth(method = "loess", se = FALSE, linewidth = 1) +
+    labs(title = paste("Resp vs Age by", gsub("_", " ", var)),
+         x = "Age", y = "Resp") +
+    theme_minimal(base_size = 10) +
+    theme(legend.position = "right")
+}
+
+# --- 1. Plot WITHOUT Marital Status (Baseline) ---
+age_maritl_plot <- ggplot(data_clean, aes(x = age, y = Resp)) +
+  geom_point(alpha = 0.05, size = 0.4) +
+  geom_smooth(method = "loess", se = FALSE, linewidth = 1) +
+  labs(title = "Resp vs Age (Overall Trend)", x = "Age", y = "Resp") +
+  theme_minimal(base_size = 10) + 
+  theme( plot.title = element_text(hjust = 0.5))
+
+# --- 2. Plot WITH Original 5-Level Marital Status ---
+age_maritl_plot_int_5lvl <- plot_age_cat('maritl') +
+  labs(title = "Resp vs Age (5-Level Maritl)") +
+  guides(color = guide_legend(title = "maritl"))
+
+
+# --- 3. Plot WITH Simplified 2-Level Marital Status ---
+# Use the existing 'maritl_simplified' column
+age_maritl_plot_int_2lvl <- plot_age_cat('maritl_simplified') +
+  labs(title = "Resp vs Age (2-Level Maritl)") +
+  guides(color = guide_legend(title = "maritl"))
+
+
+# --- Display All Three Charts Side-by-Side ---
+# (Overall Trend | 5-Level Comparison | 2-Level Comparison)
+(age_maritl_plot | age_maritl_plot_int_5lvl | age_maritl_plot_int_2lvl)
+```
+
+
+# 4. Modeling Strategy and Results
+
+## 4.1 Data Partitioning and Modeling Approach
+
+The cleaned data ($n=2,940$) was partitioned into an **80% training set** ($\text{Wage.train}$) for model fitting and hyperparameter tuning, and a **20% test set** ($\text{Wage.test}$) for unbiased performance evaluation.Our modeling strategy moved from simple parametric models to complex non-parametric methods to find the optimal balance between predictive accuracy (low Test MSE) and statistical inference (interpretability):
+
+* **Baseline & Regularized Models:** (MLR, Ridge, LASSO) provide a simple linear benchmark.
+* **Interpretable Non-Linear Models:** (Polynomial Regression, GAMs) capture non-linear trends and key interactions.
+* **Non-Parametric Ensemble Models:** (Random Forest, Boosting) offer maximum predictive power by capturing arbitrary interactions.
+
+```{r, include= FALSE}
+n <- nrow(data_clean)
+train_size <- round(n * 0.8) # Create an 80/20 split
+train <- sample(1:n,train_size, replace = FALSE)
+test <- -train
+
+Wage.train <- data_clean[train, ]
+Wage.test  <- data_clean[test, ]
+```
+
+## 4.2 Performance of Interpretable Non-Linear Models
+
+### 4.2.1 Polynomial Regression:
+
+Polynomial regression was first used as a simple and interpretable way to introduce curvature in the model.
+
+* Captures curvature without fully abandoning linear structure
+* Used as a first benchmark for nonlinearity
+* Fit with and without marital-status interaction terms
+* Helps determine whether interaction effects meaningfully improve model accuracy
+
+**Polynomial Regression Results**
+
+The Best Polynomial Model used a third-degree polynomial for $\text{logwage}$ and a second-degree polynomial for $\text{age}$, with both terms fully interacting with $\text{maritl}$ (recoded as Married/Not Married), plus all other categorical predictors.
+
+$$\text{Resp} \sim \text{poly}(\text{logwage}, 3) \times \text{maritl} + \text{poly}(\text{age}, 2) \times \text{maritl} + \text{All Categoricals}$$
+
+```{r, include = FALSE}
+# log(Wage)
+
+# Fit 3rd degree polynomial using basic polynomial and with interaction effects. And include GAM.
+fit_poly_3 <- lm(Resp ~ poly(logwage, 3), data = Wage.train)
+fit_poly3_int <- lm(Resp ~ poly(logwage, 3) * maritl, data = Wage.train)
+fit_gam_3 <- gam(Resp ~ s(logwage, by = maritl) + maritl, data = Wage.train)
+
+# Age
+# Fit 2nd-degree polynomial using basic, interaction, and GAM for age
+fit_age_poly2     <- lm(Resp ~ poly(age, 2), data = Wage.train)
+fit_age_poly2_int <- lm(Resp ~ poly(age, 2) * maritl, data = Wage.train)
+fit_age_gam       <- gam(Resp ~ s(age, by = maritl) + maritl, data = Wage.train)
+
+# Full model with all categories
+poly_full_model <- lm(
+  Resp ~ poly(logwage, 3) * maritl + poly(age, 2) * maritl,
+  data = Wage.train
+)
+
+# Polynomial for logwage AND age (no interaction effects)
+poly_both_no_int <- lm(
+  Resp ~ poly(logwage, 3) + poly(age, 2),
+  data = Wage.train
+)
+
+
+```
+
+```{r, echo = FALSE, warning=FALSE}
+# Degree 3 predictions + MSE
+pred3 <- predict(fit_poly_3, newdata = data_clean[test, ])
+pred3_int <- predict(fit_poly3_int, newdata = data_clean[test, ]) 
+pred_gam_3 <- predict(fit_gam_3, newdata = data_clean[test, ])
+
+# Predictions + MSE for age-based models
+pred_age2      <- predict(fit_age_poly2,     newdata = Wage.test)
+pred_age2_int  <- predict(fit_age_poly2_int, newdata = Wage.test)
+pred_age_gam   <- predict(fit_age_gam,       newdata = Wage.test)
+
+# Predict Full Model
+pred_poly_full  <- predict(poly_full_model, newdata = Wage.test)
+pred_poly_both_no_int <- predict(poly_both_no_int, newdata = Wage.test)
+
+# Calculate the MSE 
+mse3  <- mean((pred3 - data_clean[test, ]$Resp)^2)
+mse3_int <- mean((pred3_int - data_clean[test, ]$Resp)^2)
+mse3_gam <- mean((pred_gam_3 - data_clean[test, ]$Resp)^2)
+
+mse_age2      <- mean((pred_age2     - Wage.test$Resp)^2)
+mse_age2_int  <- mean((pred_age2_int - Wage.test$Resp)^2)
+mse_age2_gam  <- mean((pred_age_gam  - Wage.test$Resp)^2)
+
+mse_poly_full <- mean((pred_poly_full     - Wage.test$Resp)^2)
+mse_poly_both_no_int  <- mean((pred_poly_both_no_int - Wage.test$Resp)^2)
+
+mse_results <- data.frame(
+  Model = c("Age Polynomial (Degree 2)",
+            "log(Wage) Polynomial (Degree 3)",
+            "Age Polynomial (Degree 2) with Marriage Interaction",
+            "log(Wage) Polynomial (Degree 3) with Marriage Interaction",
+            "Age and log(wage) Polynomial (no interaction)",
+            "Age and log(wage) with marital status interaction"),
+  Test_MSE = c(mse_age2,
+               mse3,
+               mse_age2_int,
+               mse3_int,
+               mse_poly_both_no_int,
+               mse_poly_full)
+)
+
+
+kable(mse_results, caption = "log(Wage) and Age Polynomial Test MSE Results") %>%
+  kable_styling(full_width = FALSE)
+
+```
+
+The results show that adding nonlinear terms for both predictors does not improve performance by much unless interaction effects are included, indicating that subgroup differences by marital status drive much of the predictive gain.
+
+
+
+```{r, echo = FALSE, warning = FALSE, include= FALSE}
+poly_full_all <- lm(
+  Resp ~ 
+    poly(logwage, 3) * maritl +
+    poly(age, 2) * maritl +
+    education + race + jobclass + health + health_ins,
+  data = Wage.train
+)
+
+pred_poly_full_all  <- predict(poly_full_all, newdata = Wage.test)
+
+mse_poly_full_all     <- mean((pred_poly_full_all     - Wage.test$Resp)^2)
+mse_full_all_results <- data.frame(
+  Model    = c("Age and log(wage) with marital status interaction + all other variables"),
+  Test_MSE = c(mse_poly_full_all)
+)
+
+kable(mse_full_all_results, caption = "Full Model Polynomial Regression Test MSE Results") %>%
+  kable_styling(full_width = FALSE)
+
+```
+
+**Introducing Categorical Predictors**
+
+In an effort to improve the model's performance, the age and log(Wage) model with interaction effects is set as the baseline. From there, various categorical values were tested to gauge an improvement in Test MSE.
+
+```{r, echo = FALSE, warning = FALSE}
+# cat_vars: character vector of categorical variables to consider
+# train, test: your train/test data frames (e.g., Wage.train, Wage.test)
+
+test_poly_subsets <- function(train, test, cat_vars) {
+  
+  base_str <- "Resp ~ poly(logwage, 3) * maritl + poly(age, 2) * maritl"
+  
+  # generate all subsets of cat_vars (including empty set)
+  all_subsets <- unlist(
+    lapply(0:length(cat_vars), function(k) {
+      if (k == 0) {
+        list(character(0))   # empty subset
+      } else {
+        combn(cat_vars, k, simplify = FALSE)
+      }
+    }),
+    recursive = FALSE
+  )
+  
+  results <- data.frame()
+  
+  for (vars in all_subsets) {
+    if (length(vars) == 0) {
+      # base model only
+      formula_str <- base_str
+      label <- "Base: poly(logwage,3)*maritl + poly(age,2)*maritl"
+    } else {
+      added <- paste(vars, collapse = " + ")
+      formula_str <- paste(base_str, "+", added)
+      label <- paste0("Base + ", added)
+    }
+    
+    fml <- as.formula(formula_str)
+    
+    # fit model
+    fit <- lm(fml, data = train)
+    
+    # predict & compute Test MSE
+    preds <- predict(fit, newdata = test)
+    mse   <- mean((test$Resp - preds)^2)
+    
+    results <- rbind(
+      results,
+      data.frame(
+        Model        = label,
+        Test_MSE     = mse,
+        stringsAsFactors = FALSE
+      )
+    )
+  }
+  
+  # sort by Test MSE (best first)
+  results[order(results$Test_MSE), ]
+}
+
+
+cat_vars <- c("education", "race", "jobclass", "health", "health_ins")
+
+poly_subset_results <- test_poly_subsets(
+  train   = Wage.train,
+  test    = Wage.test,
+  cat_vars = cat_vars
+)
+
+
+poly_subset_results %>%
+  arrange(Test_MSE) %>%
+  slice(1:5) %>%
+  kable(
+    caption = "Top 5 Polynomial Models by Test MSE",
+    digits = 3
+  ) %>%
+  kable_styling(full_width = FALSE)
+
+```
+
+
+The top-performing polynomial models all include the full or near-full set of categorical predictors, suggesting that demographic and job-related characteristics contribute additional explanatory value beyond nonlinear age and wage effects.
+
+
+
+
+
+
+### 4.2.2 Generalized Addative Models (GAM):
+
+GAMs were implemented to address the limitations of polynomial models by learning smooth, data-driven functions rather than relying on fixed polynomial shapes.
+
+- Allows for smooth functions rather than assuming polynomial shape
+- Supports different smooths by marital status, aligning with observed interaction effects
+- Provides interpretability while modeling nonlinear patterns more accurately
+- Iteratively expanded to include additional categorical predictors (education, race, jobclass)
+
+
+## Generalized Addative Models (GAM) Results:
+
+A Generalized Additive Model (GAM) was then fit to replicate the baseline structure used in the polynomial models, incorporating log(Wage) and Age along with their interactions with marital status. Unlike polynomial regression, GAM allows the use of smoothing spline functions, enabling a flexible, non-parametric fit that can better capture nonlinear patterns without imposing a fixed global shape.
+
+The Best GAM used smoothing splines (s) for $\text{logwage}$ and $\text{age}$, with their smooth functions varying based on $\text{maritl}$ (known as $\text{gam12}$ in the internal analysis):
+
+$$\text{Resp} \sim s(\text{logwage}, \text{by} = \text{maritl}) + s(\text{age}, \text{by} = \text{maritl}) + \text{All Categoricals}$$
+```{r, echo = FALSE, warning = FALSE, message = FALSE}
+# Assumes mgcv is loaded: library(mgcv)
+
+# cat_vars: character vector of categorical variables to consider
+# train, test: your train/test data frames (e.g., Wage.train, Wage.test)
+
+test_gam_subsets <- function(train, test, cat_vars) {
+  
+  # Base GAM structure (adjust if you want no age interaction, etc.)
+  base_str <- "Resp ~ s(logwage, by = maritl) + maritl + s(age, by = maritl)"
+  
+  # Generate all subsets of cat_vars (including empty set)
+  all_subsets <- unlist(
+    lapply(0:length(cat_vars), function(k) {
+      if (k == 0) {
+        list(character(0))   # empty subset
+      } else {
+        combn(cat_vars, k, simplify = FALSE)
+      }
+    }),
+    recursive = FALSE
+  )
+  
+  results <- data.frame()
+  
+  for (vars in all_subsets) {
+    if (length(vars) == 0) {
+      # Base GAM only
+      formula_str <- base_str
+      label <- "Base: s(logwage, by=maritl) + maritl + s(age, by=maritl)"
+    } else {
+      added <- paste(vars, collapse = " + ")
+      formula_str <- paste(base_str, "+", added)
+      label <- paste0("Base + ", added)
+    }
+    
+    fml <- as.formula(formula_str)
+    
+    # Fit GAM
+    fit <- gam(fml, data = train)
+    
+    # Predict & compute Test MSE
+    preds <- predict(fit, newdata = test)
+    mse   <- mean((test$Resp - preds)^2)
+    
+    results <- rbind(
+      results,
+      data.frame(
+        Model        = label,
+        Test_MSE     = mse,
+        stringsAsFactors = FALSE
+      )
+    )
+  }
+  
+  # Sort by Test MSE (best first)
+  results[order(results$Test_MSE), ]
+}
+```
+
+
+```{r, echo = FALSE, warning = FALSE, message = FALSE}
+cat_vars <- c("education", "race", "jobclass", "health", "health_ins")
+
+gam_subset_results <- test_gam_subsets(
+  train = Wage.train,
+  test  = Wage.test,
+  cat_vars = cat_vars
+)
+
+gam_subset_results %>%
+  arrange(Test_MSE) %>%
+  slice(1:5) %>%
+  kable(
+    caption = "Top 5 GAM Models by Test MSE",
+    digits = 3
+  ) %>%
+  kable_styling(full_width = FALSE)
+```
+
+
+Similar to polynomial regression, these results suggest that the GAM framework benefits from a full or nearly full list of additional categorical predictors, which enhance predictive accuracy when paired with spline-based nonlinear effects.
+
+### Comparison to Polynomial Regression
+
+Compared to the polynomial regression models, the GAM produced slightly higher Test MSE, likely because its smoother spline-based functions constrain flexibility and introduce bias by not attempting to capture sharp curvature in the data. This slight increase in bias does result in a slightly lower residual variance, as observed in the table below.
+
+```{r, echo = FALSE, include = FALSE, warning = FALSE, message = FALSE}
+# Best GAM with all categorical predictors
+gam_best_full <- gam(
+  Resp ~ 
+    s(logwage, by = maritl) +      # smooth of logwage by marital status
+    maritl +                       # main effect of marital status
+    s(age, by = maritl) +          # smooth of age by marital status
+    education + race + jobclass +  # demographic / occupational covariates
+    health + health_ins,           # health-related covariates
+  data = Wage.train
+)
+
+# Test set predictions and Test MSE
+pred_gam_best_full <- predict(gam_best_full, newdata = Wage.test)
+mse_gam_best_full  <- mean((pred_gam_best_full - Wage.test$Resp)^2)
+```
+
+
+```{r, echo = FALSE, include = FALSE, warning = FALSE, message=FALSE}
+
+# Distinguish best models for comparison
+best_poly <- poly_full_all
+best_gam  <- gam_best_full     
+
+# Residual Variance
+var_poly <- var(residuals(best_poly))
+var_gam  <- var(residuals(best_gam))
+
+variance_compare <- data.frame(
+  Model = c("Best Polynomial", "Best GAM"),
+  Residual_Variance = c(var_poly, var_gam)
+)
+
+variance_compare %>%
+  kable(caption = "Residual Variance Comparison") %>%
+  kable_styling(full_width = FALSE)
+
+```
+
+```{r, echo = FALSE, warning = FALSE, message = FALSE, include = FALSE}
+
+# ---- POLYNOMIAL DF ----
+n_poly <- nobs(best_poly)
+p_poly <- length(coef(best_poly))
+resid_df_poly <- df.residual(best_poly)
+
+# ---- GAM DF ----
+gam_sum <- summary(best_gam)
+param_df_gam <- length(gam_sum$p.coeff)
+smooth_edf_sum <- sum(gam_sum$edf)
+total_edf_gam <- param_df_gam + smooth_edf_sum
+resid_df_gam <- best_gam$df.residual
+
+# ---- Build DF Table ----
+df_compare <- data.frame(
+  Model = c("Best Polynomial", "Best GAM"),
+  `Parametric DF` = c(p_poly, param_df_gam),
+  `Smooth EDF` = c(0, round(smooth_edf_sum, 2)),
+  `Total Effective DF` = c(p_poly, round(total_edf_gam, 2)),
+  `Residual DF` = c(resid_df_poly, resid_df_gam)
+)
+
+# ---- Fancy Table ----
+kable(df_compare,
+      caption = "Comparison of Degrees of Freedom: Polynomial vs. GAM",
+      digits = 2,
+      align = "c") %>%
+  kable_styling(full_width = FALSE, position = "center")
+
+```
+
+
+
+
+```{r, echo = FALSE, warning = FALSE, message = FALSE}
+# Cross Validation for Polynomial
+poly_cv <- function(formula, data, k = 10) {
+  set.seed(4620)  # optional, for reproducibility
+  folds <- sample(rep(1:k, length.out = nrow(data)))
+  cv_errors <- numeric(k)
+  
+  for (i in 1:k) {
+    # Train/test split for this fold
+    train_data <- droplevels(data[folds != i, ])
+    test_data  <- droplevels(data[folds == i, ])
+    
+    # Fit polynomial model
+    model <- lm(formula, data = train_data)
+    
+    # Predict and compute fold MSE
+    preds <- predict(model, newdata = test_data)
+    cv_errors[i] <- mean((test_data$Resp - preds)^2)
+  }
+  
+  mean(cv_errors)
+}
+
+
+poly_cv_val <- poly_cv(
+  Resp ~ poly(logwage, 3) * maritl +
+         poly(age, 2) * maritl +
+         education + race + jobclass + health + health_ins,
+  data = Wage.train
+)
+
+
+# Cross Validation for GAM
+gam_cv <- gam_cv <- function(model_formula, data, k = 10) {
+  folds <- sample(rep(1:k, length.out = nrow(data)))
+  cv_errors <- numeric(k)
+
+  for (i in 1:k) {
+    train_data <- data[folds != i, ]
+    test_data  <- data[folds == i, ]
+    
+    model <- gam(model_formula, data = train_data)
+    preds <- predict(model, newdata = test_data)
+    cv_errors[i] <- mean((test_data$Resp - preds)^2)
+  }
+  mean(cv_errors)
+}
+
+gam_cv_val <- gam_cv(
+  Resp ~ s(logwage, by = maritl) + maritl + s(age, by = maritl) +
+    education + race + jobclass + health + health_ins,
+  data = Wage.train
+)
+
+```
+
+
+```{r, echo = FALSE, message = FALSE, warning = FALSE, include = FALSE}
+cv_compare <- data.frame(
+  Model = c("Best Polynomial", "Best GAM"),
+  CV_MSE = c(poly_cv_val, gam_cv_val)
+)
+
+cv_compare %>%
+  kable(caption = "Cross Validation Comparison") %>%
+  kable_styling(full_width = FALSE)
+```
+
+```{r, echo = FALSE, message = FALSE, warning = FALSE}
+# Side-by-side comparison of key metrics
+model_compare <- data.frame(
+  Metric = c("Test MSE",
+             "10-fold CV MSE",
+             "Residual Variance",
+             "Total Effective DF"),
+  `Best Polynomial` = c(
+    round(mse_poly_full_all, 3),
+    round(poly_cv_val, 3),
+    round(var_poly, 3),
+    round(p_poly, 2)
+  ),
+  `Best GAM` = c(
+    round(mse_gam_best_full, 3),
+    round(gam_cv_val, 3),
+    round(var_gam, 3),
+    round(total_edf_gam, 2)
+  )
+)
+
+model_compare %>%
+  kable(caption = "Comparison of Best Polynomial and GAM Models") %>%
+  kable_styling(full_width = FALSE, position = "center")
+```
+
+
+The best polynomial model achieves slightly lower test MSE (0.976 vs 0.986) and lower 10-fold CV MSE (1.031 vs 1.056) than the GAM, indicating marginally better out-of-sample performance and stability with fewer effective degrees of freedom (22 vs 31.11). Although the GAM attains a very slightly lower residual variance, this comes at the cost of greater complexity, so the polynomial model offers a better balance of accuracy, parsimony, and interpretability.
+
+
+```{r, echo = FALSE, include = FALSE, warning = FALSE, message=FALSE}
+par(mfrow=c(1,2))
+plot(residuals(best_poly) ~ fitted(best_poly),
+     main="Polynomial Residuals vs Fitted", pch=16, col=rgb(0,0,0,.2))
+abline(h=0, col="red")
+
+plot(residuals(best_gam) ~ fitted(best_gam),
+     main="GAM Residuals vs Fitted", pch=16, col=rgb(0,0,0,.2))
+abline(h=0, col="red")
+```
+
+
+
+## Tree Based Method Results
+
+Description as to why...
+
+### Include Table Here for 4 Methods
+
+- Test MSE
+- CV MSE
+- Residual Variance
+- Effective Degrees of Freedom
+
+
+Short summary of best one.
+
+### Comparison to Parametric Models 
+
+Explain pros but mostly cons because it doesn't perform as well
+
+
+## Model Evaluation
+
+- Explain how close the polynomial and GAM are in results (compare bias and variance). Lowkey this is basically the section I did above (Summary Comparison of Best Polynomial and GAM Models) so maybe it would be better here -- perhaps a copy paste scenario. You'd have to add the tree results too, just pick the best of the tree methods (boosting I think)
+
+- Looks like Polynomial has the edge in Test MSE and CV MSE. Although it barely loses the variance battle, its effective DF is so much lower than the GAM spline method. 
+
+- Talk about explainability of polynomial method vs others.
+
+- Write out final Model Equation
+
+
+
+
+# Appendix
+
+**Appendix 1**
+\footnotesize
+```{r echo=FALSE, message=FALSE, warning=FALSE}
+summary(lm(Resp ~ age * education, data = data_clean))
+summary(lm(Resp ~ age * jobclass, data = data_clean))
+summary(lm(Resp ~ age * health, data = data_clean))
+summary(lm(Resp ~ age * maritl, data = data_clean))
+summary(lm(Resp ~ age * health_ins, data = data_clean))
+```
+\normalsize
+
+**Appendix 2**
+\footnotesize
+```{r echo=FALSE, message=FALSE, warning=FALSE}
+summary(lm(Resp ~ logwage * education, data = data_clean))
+summary(lm(Resp ~ logwage * jobclass, data = data_clean))
+summary(lm(Resp ~ logwage * health, data = data_clean))
+summary(lm(Resp ~ logwage * maritl, data = data_clean))
+summary(lm(Resp ~ logwage * health_ins, data = data_clean))
+```
+\normalsize
+
+**Appendix 3**
+```{r echo=FALSE, message=FALSE, warning=FALSE}
+m0 <- lm(Resp ~ age + maritl, data = data_clean)
+m1 <- lm(Resp ~ age * maritl, data = data_clean)
+anova(m0, m1)
+
+m2 <- lm(Resp ~ age + health, data = data_clean)
+m3 <- lm(Resp ~ age * health, data = data_clean)
+anova(m2, m3)
+
+m4 <- lm(Resp ~ age + health_ins, data = data_clean)
+m5 <- lm(Resp ~ age * health_ins, data = data_clean)
+anova(m4, m5)
+```
+
+**Appendix 4**
+```{r echo=FALSE, message=FALSE, warning=FALSE}
+m0 <- lm(Resp ~ logwage + health_ins, data = data_clean)
+m1 <- lm(Resp ~ logwage * health_ins, data = data_clean)
+anova(m0, m1)
+
+m2 <- lm(Resp ~ logwage + maritl, data = data_clean)
+m3 <- lm(Resp ~ logwage * maritl, data = data_clean)
+anova(m2, m3)
+```
+
+**Appendix 5**
+
+**Appendix 6**
+
+**Appendix 7**
+
+**Appendix 8**
+
+**Appendix 9**
+
+**Appendix 10**
+
+**Appendix 11**
+
+
