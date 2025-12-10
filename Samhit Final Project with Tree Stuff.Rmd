@@ -1,0 +1,1075 @@
+---
+title: "Samhit Final Project Modeling Report"
+author: "Samhit Kasichainula"
+date: "`r Sys.Date()`"
+output: pdf_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+
+set.seed(4620)
+
+# Packages
+if (!require("splines")) {
+  install.packages("splines")
+  library(splines)
+}
+
+if (!require("ISLR2")) {
+  install.packages("ISLR2")
+  library(ISLR2)
+}
+
+if (!require("dplyr")) {
+  install.packages("dplyr")
+  library(dplyr)
+}
+
+if (!require("corrplot")) {
+  install.packages("corrplot")
+  library(corrplot)
+}
+
+if (!require("ggplot2")) {
+  install.packages("ggplot2")
+  library(ggplot2)
+}
+
+if (!require("patchwork")) {
+  install.packages("patchwork")
+  library(patchwork)
+}
+
+if (!require("MASS")) {
+  install.packages("MASS")
+  library(MASS)
+}
+
+if (!require("tibble")) {
+  install.packages("tibble")
+  library(tibble)
+}
+
+if (!require("boot")) {
+  install.packages("boot")
+  library(boot)
+}
+
+if (!require("mgcv")) {
+  install.packages("mgcv")
+  library(mgcv)
+}
+
+if (!require("car")) {
+  install.packages("car")
+  library(car)
+}
+
+if (!require("tree")) {
+  install.packages("tree")
+  library(tree)
+}
+
+if (!require("randomForest")) {  # for bagging + RF
+  install.packages("randomForest")
+  library(randomForest)
+}
+
+if (!require("gbm")) {           # for boosting
+  install.packages("gbm")
+  library(gbm)
+}
+
+if (!require("knitr")) { 
+  install.packages("knitr")
+  library(knitr)
+}
+
+if (!require("kableExtra")) { 
+  install.packages("kableExtra")
+  library(kableExtra)
+}
+```
+
+
+## Objective
+
+The goal of this modeling section is to predict the response variable (Resp) using individual demographic and employment-related characteristics. Preliminary exploratory analysis revealed:
+
+- Nonlinear patterns between Resp and both age and log(wage)
+
+- Bi-modal and right-skewed distribution, violating strict linear model assumptions
+
+- Meaningful interaction between marital status and both age and log(wage)
+
+These findings motivated the use of nonlinear regression approaches including polynomial regression, generalized additive models (GAM), and tree-based ensemble methods.
+
+```{r, include=FALSE}
+load("Wage_Stat4620_2023.RData")
+data <- Wage_Stat4620
+```
+
+## Data Cleaning & Preparation
+
+### Removing N/A Values:
+
+We see 60 N/A values for Resp in the 3000 values of data. We will remove them as they were missing completely at random.
+
+```{r, include=FALSE}
+# Get rid of all the N/A response variables
+data_clean <- data %>% filter(!is.na(Resp))
+data <- data_clean
+```
+
+
+### Recoding Marital Status:
+
+```{r, include = FALSE}
+# Save original copy of marital status to use for plotting
+data$maritl_original <- data$maritl
+
+# Change marital status to married vs not married
+data$maritl <- ifelse(data$maritl == "2. Married","Married", "Not Married")
+data$maritl <- factor(data$maritl,levels = c("Not Married", "Married"))
+```
+
+```{r, echo=FALSE, out.width = "60%", fig.align='center'}
+par(mfrow = c(1,2))
+
+boxplot(Resp ~ maritl_original, data = data,
+        main = "Before Recoding",
+        xlab = "Original Marital Status",
+        ylab = "Resp")
+
+boxplot(Resp ~ maritl, data = data,
+        main = "After Recoding",
+        xlab = "Recoded Marital Status",
+        ylab = "Resp")
+
+par(mfrow = c(1,1))
+```
+
+
+Marital status values were aggregated into Married vs. Not Married to reflect observed differences in Resp.
+
+```{r, echo = FALSE, message = FALSE, fig.align='center', warning = FALSE, out.width= "60%"}
+ggplot(data, aes(x = Resp, fill = maritl, color = maritl)) +
+  geom_histogram(position = "identity", alpha = 0.4, bins = 25) +
+  scale_fill_manual(values = c("Not Married" = "#FF9999", "Married" = "#66CCCC")) +
+  scale_color_manual(values = c("Not Married" = "#FF7777", "Married" = "#55BBBB")) +
+  labs(
+    title = "Distribution of Resp by Marital Status",
+    x = "Resp",
+    y = "Count"
+  ) +
+  theme_minimal()
+```
+
+This distinction in marital status also helps define the bimodal distribution observed earlier.
+
+### Train/Test Split:
+
+To prepare for the modeling phase, we create an 80/20 train/test split.
+
+```{r, include= FALSE}
+n <- nrow(data)
+train_size <- round(n * 0.8) # Create an 80/20 split
+train <- sample(1:n,train_size, replace = FALSE)
+test <- -train
+
+Wage.train <- data[train, ]
+Wage.test  <- data[test, ]
+```
+
+## Understanding Interactions
+
+### Resp vs log(Wage)
+
+```{r,echo = FALSE, out.width = "80%", fig.align='center', message=FALSE, warning=FALSE}
+
+# WITH interaction: one smooth curve, accounting for marital status
+plot_cat <- function(var) {
+  ggplot(data, aes(x = logwage, y = Resp, color = .data[[var]])) +
+    geom_point(alpha = 0.05, size = 0.4) +
+    geom_smooth(method = "loess", se = FALSE, linewidth = 1) +
+    labs(title = paste("Resp vs Logwage by Marital Status"),
+         x = "log(wage)", y = "Resp") +
+    theme_minimal(base_size = 10) +
+    theme(
+      legend.position = "right",
+      plot.title = element_text(hjust = 0.5)   # centers title
+    )
+}
+
+
+logwage_maritl_plot_int <- plot_cat("maritl")
+
+# WITHOUT interaction: one smooth curve, ignoring marital status
+logwage_maritl_plot <- ggplot(data, aes(x = logwage, y = Resp)) +
+  geom_point(alpha = 0.05, size = 0.4) +
+  geom_smooth(method = "loess", se = FALSE, linewidth = 1) +
+  labs(title = "Resp vs logwage",
+       x = "log(wage)", y = "Resp") +
+  theme_minimal(base_size = 10) +
+  theme(
+    plot.title = element_text(hjust = 0.5)
+  )
+
+# Side-by-side comparison
+(logwage_maritl_plot | logwage_maritl_plot_int)
+```
+
+While the model without marital status shows one smooth upward trend, the inclusion of marital status produces two distinct trajectories, especially at higher wage levels, illustrating a meaningful interaction effect.
+
+### Resp vs Age
+
+```{r,echo = FALSE, out.width = "80%", fig.align='center', message=FALSE, warning=FALSE}
+
+# WITH interaction: one smooth curve, accounting marital status
+plot_age_cat <- function(var) {
+  ggplot(data, aes(x = age, y = Resp, color = .data[[var]])) +
+    geom_point(alpha = 0.05, size = 0.4) +
+    geom_smooth(method = "loess", se = FALSE, linewidth = 1) +
+    labs(title = paste("Resp vs Age by Marital Status"),
+         x = "Age", y = "Resp") +
+    theme_minimal(base_size = 10) +
+    theme(legend.position = "right")
+}
+
+age_maritl_plot_int <- plot_age_cat('maritl')
+
+
+# WITHOUT interaction: one smooth curve, ignoring marital status
+age_maritl_plot <- ggplot(data, aes(x = age, y = Resp)) +
+  geom_point(alpha = 0.05, size = 0.4) +
+  geom_smooth(method = "loess", se = FALSE, linewidth = 1) +
+  labs(title = "Resp vs Age",
+       x = "Age", y = "Resp") +
+  theme_minimal(base_size = 10) +
+  theme(
+    plot.title = element_text(hjust = 0.5)
+  )
+
+# Side-by-side comparison
+(age_maritl_plot | age_maritl_plot_int)
+
+```
+
+Including marital status reveals an interaction effect, where married individuals display consistently higher and more rapidly increasing response values across age.
+
+## Modeling Strategy
+
+To evaluate predictive performance and capture the nonlinear and subgroup-dependent patterns observed in the exploratory analysis, multiple modeling approaches were fit in increasing order of flexibility.
+
+### Polynomial Regression:
+
+Polynomial regression was first used as a simple and interpretable way to introduce curvature in the model.
+
+- Captures curvature without fully abandoning linear structure
+- Used as a first benchmark for nonlinearity
+- Fit with and without marital-status interaction terms
+- Helps determine whether interaction effects meaningfully improve model accuracy
+
+### Generalized Addative Models (GAM):
+
+GAMs were implemented to address the limitations of polynomial models by learning smooth, data-driven functions rather than relying on fixed polynomial shapes.
+
+- Allows for smooth functions rather than assuming polynomial shape
+- Supports different smooths by marital status, aligning with observed interaction effects
+- Provides interpretability while modeling nonlinear patterns more accurately
+- Iteratively expanded to include additional categorical predictors (education, race, jobclass)
+
+### Tree Based Methods:
+
+Tree-based approaches were considered to compare parametric models against nonparametric methods capable of automatically detecting interaction structures.
+
+- CART, bagging, random forests, and boosting were tested
+- Automatically capture nonlinearities and interaction structures
+- Useful as a performance benchmark against GAM
+- Less interpretable; performance gain must justify complexity
+
+### Model Evaluation Critera:
+
+Model evaluation focused on predictive performance and stability across validation folds.
+
+- Primary metric: Test Mean Squared Error (MSE) on held-out 20% test sample
+- Secondary: 10-fold cross-validation for GAM to assess stability
+- Considered interpretability when comparing final candidate models
+- Model selection balances accuracy, complexity, and real-world explanation
+
+## Polynomial Regression Results
+
+Polynomial regression models were first fit to establish a baseline nonlinear relationship before combining them to search for the lowest test MSE.
+
+```{r, include = FALSE}
+# log(Wage)
+
+# Fit 3rd degree polynomial using basic polynomial and with interaction effects. And include GAM.
+fit_poly_3 <- lm(Resp ~ poly(logwage, 3), data = Wage.train)
+fit_poly3_int <- lm(Resp ~ poly(logwage, 3) * maritl, data = Wage.train)
+fit_gam_3 <- gam(Resp ~ s(logwage, by = maritl) + maritl, data = Wage.train)
+
+# Age
+# Fit 2nd-degree polynomial using basic, interaction, and GAM for age
+fit_age_poly2     <- lm(Resp ~ poly(age, 2), data = Wage.train)
+fit_age_poly2_int <- lm(Resp ~ poly(age, 2) * maritl, data = Wage.train)
+fit_age_gam       <- gam(Resp ~ s(age, by = maritl) + maritl, data = Wage.train)
+
+# Full model with all categories
+poly_full_model <- lm(
+  Resp ~ poly(logwage, 3) * maritl + poly(age, 2) * maritl,
+  data = Wage.train
+)
+
+# Polynomial for logwage AND age (no interaction effects)
+poly_both_no_int <- lm(
+  Resp ~ poly(logwage, 3) + poly(age, 2),
+  data = Wage.train
+)
+
+
+```
+
+
+```{r, echo = FALSE, warning=FALSE}
+# Degree 3 predictions + MSE
+pred3 <- predict(fit_poly_3, newdata = data[test, ])
+pred3_int <- predict(fit_poly3_int, newdata = data[test, ]) 
+pred_gam_3 <- predict(fit_gam_3, newdata = data[test, ])
+
+# Predictions + MSE for age-based models
+pred_age2      <- predict(fit_age_poly2,     newdata = Wage.test)
+pred_age2_int  <- predict(fit_age_poly2_int, newdata = Wage.test)
+pred_age_gam   <- predict(fit_age_gam,       newdata = Wage.test)
+
+# Predict Full Model
+pred_poly_full  <- predict(poly_full_model, newdata = Wage.test)
+pred_poly_both_no_int <- predict(poly_both_no_int, newdata = Wage.test)
+
+# Calculate the MSE 
+mse3  <- mean((pred3 - data[test, ]$Resp)^2)
+mse3_int <- mean((pred3_int - data[test, ]$Resp)^2)
+mse3_gam <- mean((pred_gam_3 - data[test, ]$Resp)^2)
+
+mse_age2      <- mean((pred_age2     - Wage.test$Resp)^2)
+mse_age2_int  <- mean((pred_age2_int - Wage.test$Resp)^2)
+mse_age2_gam  <- mean((pred_age_gam  - Wage.test$Resp)^2)
+
+mse_poly_full <- mean((pred_poly_full     - Wage.test$Resp)^2)
+mse_poly_both_no_int  <- mean((pred_poly_both_no_int - Wage.test$Resp)^2)
+
+mse_results <- data.frame(
+  Model = c("Age Polynomial (Degree 2)",
+            "log(Wage) Polynomial (Degree 3)",
+            "Age Polynomial (Degree 2) with Marriage Interaction",
+            "log(Wage) Polynomial (Degree 3) with Marriage Interaction",
+            "Age and log(wage) Polynomial (no interaction)",
+            "Age and log(wage) with marital status interaction"),
+  Test_MSE = c(mse_age2,
+               mse3,
+               mse_age2_int,
+               mse3_int,
+               mse_poly_both_no_int,
+               mse_poly_full)
+)
+
+
+kable(mse_results, caption = "log(Wage) and Age Polynomial Test MSE Results") %>%
+  kable_styling(full_width = FALSE)
+
+```
+
+The results show that adding nonlinear terms for both predictors does not improve performance by much unless interaction effects are included, indicating that subgroup differences by marital status drive much of the predictive gain.
+
+
+```{r, echo = FALSE, warning = FALSE, include= FALSE}
+poly_full_all <- lm(
+  Resp ~ 
+    poly(logwage, 3) * maritl +
+    poly(age, 2) * maritl +
+    education + race + jobclass + health + health_ins,
+  data = Wage.train
+)
+
+pred_poly_full_all  <- predict(poly_full_all, newdata = Wage.test)
+
+mse_poly_full_all     <- mean((pred_poly_full_all     - Wage.test$Resp)^2)
+mse_full_all_results <- data.frame(
+  Model    = c("Age and log(wage) with marital status interaction + all other variables"),
+  Test_MSE = c(mse_poly_full_all)
+)
+
+kable(mse_full_all_results, caption = "Full Model Polynomial Regression Test MSE Results") %>%
+  kable_styling(full_width = FALSE)
+
+```
+
+### Introducing Categorical Predictors
+
+In an effort to improve the model's performance, the age and log(Wage) model with interaction effects is set as the baseline. From there, various categorical values were tested to gauge an improvement in Test MSE.
+
+```{r, echo = FALSE, warning = FALSE}
+# cat_vars: character vector of categorical variables to consider
+# train, test: your train/test data frames (e.g., Wage.train, Wage.test)
+
+test_poly_subsets <- function(train, test, cat_vars) {
+  
+  base_str <- "Resp ~ poly(logwage, 3) * maritl + poly(age, 2) * maritl"
+  
+  # generate all subsets of cat_vars (including empty set)
+  all_subsets <- unlist(
+    lapply(0:length(cat_vars), function(k) {
+      if (k == 0) {
+        list(character(0))   # empty subset
+      } else {
+        combn(cat_vars, k, simplify = FALSE)
+      }
+    }),
+    recursive = FALSE
+  )
+  
+  results <- data.frame()
+  
+  for (vars in all_subsets) {
+    if (length(vars) == 0) {
+      # base model only
+      formula_str <- base_str
+      label <- "Base: poly(logwage,3)*maritl + poly(age,2)*maritl"
+    } else {
+      added <- paste(vars, collapse = " + ")
+      formula_str <- paste(base_str, "+", added)
+      label <- paste0("Base + ", added)
+    }
+    
+    fml <- as.formula(formula_str)
+    
+    # fit model
+    fit <- lm(fml, data = train)
+    
+    # predict & compute Test MSE
+    preds <- predict(fit, newdata = test)
+    mse   <- mean((test$Resp - preds)^2)
+    
+    results <- rbind(
+      results,
+      data.frame(
+        Model        = label,
+        Test_MSE     = mse,
+        stringsAsFactors = FALSE
+      )
+    )
+  }
+  
+  # sort by Test MSE (best first)
+  results[order(results$Test_MSE), ]
+}
+
+
+cat_vars <- c("education", "race", "jobclass", "health", "health_ins")
+
+poly_subset_results <- test_poly_subsets(
+  train   = Wage.train,
+  test    = Wage.test,
+  cat_vars = cat_vars
+)
+
+
+poly_subset_results %>%
+  arrange(Test_MSE) %>%
+  slice(1:5) %>%
+  kable(
+    caption = "Top 5 Polynomial Models by Test MSE",
+    digits = 3
+  ) %>%
+  kable_styling(full_width = FALSE)
+
+```
+
+
+The top-performing polynomial models all include the full or near-full set of categorical predictors, suggesting that demographic and job-related characteristics contribute additional explanatory value beyond nonlinear age and wage effects.
+
+
+
+## Generalized Addative Models (GAM) Results:
+
+A Generalized Additive Model (GAM) was then fit to replicate the baseline structure used in the polynomial models, incorporating log(Wage) and Age along with their interactions with marital status. Unlike polynomial regression, GAM allows the use of smoothing spline functions, enabling a flexible, non-parametric fit that can better capture nonlinear patterns without imposing a fixed global shape.
+
+
+
+```{r, echo = FALSE, warning = FALSE, message = FALSE}
+# Assumes mgcv is loaded: library(mgcv)
+
+# cat_vars: character vector of categorical variables to consider
+# train, test: your train/test data frames (e.g., Wage.train, Wage.test)
+
+test_gam_subsets <- function(train, test, cat_vars) {
+  
+  # Base GAM structure (adjust if you want no age interaction, etc.)
+  base_str <- "Resp ~ s(logwage, by = maritl) + maritl + s(age, by = maritl)"
+  
+  # Generate all subsets of cat_vars (including empty set)
+  all_subsets <- unlist(
+    lapply(0:length(cat_vars), function(k) {
+      if (k == 0) {
+        list(character(0))   # empty subset
+      } else {
+        combn(cat_vars, k, simplify = FALSE)
+      }
+    }),
+    recursive = FALSE
+  )
+  
+  results <- data.frame()
+  
+  for (vars in all_subsets) {
+    if (length(vars) == 0) {
+      # Base GAM only
+      formula_str <- base_str
+      label <- "Base: s(logwage, by=maritl) + maritl + s(age, by=maritl)"
+    } else {
+      added <- paste(vars, collapse = " + ")
+      formula_str <- paste(base_str, "+", added)
+      label <- paste0("Base + ", added)
+    }
+    
+    fml <- as.formula(formula_str)
+    
+    # Fit GAM
+    fit <- gam(fml, data = train)
+    
+    # Predict & compute Test MSE
+    preds <- predict(fit, newdata = test)
+    mse   <- mean((test$Resp - preds)^2)
+    
+    results <- rbind(
+      results,
+      data.frame(
+        Model        = label,
+        Test_MSE     = mse,
+        stringsAsFactors = FALSE
+      )
+    )
+  }
+  
+  # Sort by Test MSE (best first)
+  results[order(results$Test_MSE), ]
+}
+```
+
+
+```{r, echo = FALSE, warning = FALSE, message = FALSE}
+cat_vars <- c("education", "race", "jobclass", "health", "health_ins")
+
+gam_subset_results <- test_gam_subsets(
+  train = Wage.train,
+  test  = Wage.test,
+  cat_vars = cat_vars
+)
+
+gam_subset_results %>%
+  arrange(Test_MSE) %>%
+  slice(1:5) %>%
+  kable(
+    caption = "Top 5 GAM Models by Test MSE",
+    digits = 3
+  ) %>%
+  kable_styling(full_width = FALSE)
+```
+
+
+Similar to polynomial regression, these results suggest that the GAM framework benefits from a full or nearly full list of additional categorical predictors, which enhance predictive accuracy when paired with spline-based nonlinear effects.
+
+### Comparison to Polynomial Regression
+
+Compared to the polynomial regression models, the GAM produced slightly higher Test MSE, likely because its smoother spline-based functions constrain flexibility and introduce bias by not attempting to capture sharp curvature in the data. This slight increase in bias does result in a slightly lower residual variance, as observed in the table below.
+
+```{r, echo = FALSE, include = FALSE, warning = FALSE, message = FALSE}
+# Best GAM with all categorical predictors
+gam_best_full <- gam(
+  Resp ~ 
+    s(logwage, by = maritl) +      # smooth of logwage by marital status
+    maritl +                       # main effect of marital status
+    s(age, by = maritl) +          # smooth of age by marital status
+    education + race + jobclass +  # demographic / occupational covariates
+    health + health_ins,           # health-related covariates
+  data = Wage.train
+)
+
+# Test set predictions and Test MSE
+pred_gam_best_full <- predict(gam_best_full, newdata = Wage.test)
+mse_gam_best_full  <- mean((pred_gam_best_full - Wage.test$Resp)^2)
+```
+
+
+```{r, echo = FALSE, include = FALSE, warning = FALSE, message=FALSE}
+
+# Distinguish best models for comparison
+best_poly <- poly_full_all
+best_gam  <- gam_best_full     
+
+# Residual Variance
+var_poly <- var(residuals(best_poly))
+var_gam  <- var(residuals(best_gam))
+
+variance_compare <- data.frame(
+  Model = c("Best Polynomial", "Best GAM"),
+  Residual_Variance = c(var_poly, var_gam)
+)
+
+variance_compare %>%
+  kable(caption = "Residual Variance Comparison") %>%
+  kable_styling(full_width = FALSE)
+
+```
+
+
+
+```{r, echo = FALSE, warning = FALSE, message = FALSE, include = FALSE}
+
+# ---- POLYNOMIAL DF ----
+n_poly <- nobs(best_poly)
+p_poly <- length(coef(best_poly))
+resid_df_poly <- df.residual(best_poly)
+
+# ---- GAM DF ----
+gam_sum <- summary(best_gam)
+param_df_gam <- length(gam_sum$p.coeff)
+smooth_edf_sum <- sum(gam_sum$edf)
+total_edf_gam <- param_df_gam + smooth_edf_sum
+resid_df_gam <- best_gam$df.residual
+
+# ---- Build DF Table ----
+df_compare <- data.frame(
+  Model = c("Best Polynomial", "Best GAM"),
+  `Parametric DF` = c(p_poly, param_df_gam),
+  `Smooth EDF` = c(0, round(smooth_edf_sum, 2)),
+  `Total Effective DF` = c(p_poly, round(total_edf_gam, 2)),
+  `Residual DF` = c(resid_df_poly, resid_df_gam)
+)
+
+# ---- Fancy Table ----
+kable(df_compare,
+      caption = "Comparison of Degrees of Freedom: Polynomial vs. GAM",
+      digits = 2,
+      align = "c") %>%
+  kable_styling(full_width = FALSE, position = "center")
+
+```
+
+
+
+
+```{r, echo = FALSE, warning = FALSE, message = FALSE}
+# Cross Validation for Polynomial
+poly_cv <- function(formula, data, k = 10) {
+  set.seed(4620)  # optional, for reproducibility
+  folds <- sample(rep(1:k, length.out = nrow(data)))
+  cv_errors <- numeric(k)
+  
+  for (i in 1:k) {
+    # Train/test split for this fold
+    train_data <- droplevels(data[folds != i, ])
+    test_data  <- droplevels(data[folds == i, ])
+    
+    # Fit polynomial model
+    model <- lm(formula, data = train_data)
+    
+    # Predict and compute fold MSE
+    preds <- predict(model, newdata = test_data)
+    cv_errors[i] <- mean((test_data$Resp - preds)^2)
+  }
+  
+  mean(cv_errors)
+}
+
+
+poly_cv_val <- poly_cv(
+  Resp ~ poly(logwage, 3) * maritl +
+         poly(age, 2) * maritl +
+         education + race + jobclass + health + health_ins,
+  data = Wage.train
+)
+
+
+# Cross Validation for GAM
+gam_cv <- gam_cv <- function(model_formula, data, k = 10) {
+  folds <- sample(rep(1:k, length.out = nrow(data)))
+  cv_errors <- numeric(k)
+
+  for (i in 1:k) {
+    train_data <- data[folds != i, ]
+    test_data  <- data[folds == i, ]
+    
+    model <- gam(model_formula, data = train_data)
+    preds <- predict(model, newdata = test_data)
+    cv_errors[i] <- mean((test_data$Resp - preds)^2)
+  }
+  mean(cv_errors)
+}
+
+gam_cv_val <- gam_cv(
+  Resp ~ s(logwage, by = maritl) + maritl + s(age, by = maritl) +
+    education + race + jobclass + health + health_ins,
+  data = Wage.train
+)
+
+```
+
+
+```{r, echo = FALSE, message = FALSE, warning = FALSE, include = FALSE}
+cv_compare <- data.frame(
+  Model = c("Best Polynomial", "Best GAM"),
+  CV_MSE = c(poly_cv_val, gam_cv_val)
+)
+
+cv_compare %>%
+  kable(caption = "Cross Validation Comparison") %>%
+  kable_styling(full_width = FALSE)
+```
+
+```{r, echo = FALSE, message = FALSE, warning = FALSE}
+# Side-by-side comparison of key metrics
+model_compare <- data.frame(
+  Metric = c("Test MSE",
+             "10-fold CV MSE",
+             "Residual Variance",
+             "Total Effective DF"),
+  `Best Polynomial` = c(
+    round(mse_poly_full_all, 3),
+    round(poly_cv_val, 3),
+    round(var_poly, 3),
+    round(p_poly, 2)
+  ),
+  `Best GAM` = c(
+    round(mse_gam_best_full, 3),
+    round(gam_cv_val, 3),
+    round(var_gam, 3),
+    round(total_edf_gam, 2)
+  )
+)
+
+model_compare %>%
+  kable(caption = "Comparison of Best Polynomial and GAM Models") %>%
+  kable_styling(full_width = FALSE, position = "center")
+```
+
+
+The best polynomial model achieves slightly lower test MSE (0.976 vs 0.986) and lower 10-fold CV MSE (1.031 vs 1.056) than the GAM, indicating marginally better out-of-sample performance and stability with fewer effective degrees of freedom (22 vs 31.11). Although the GAM attains a very slightly lower residual variance, this comes at the cost of greater complexity, so the polynomial model offers a better balance of accuracy, parsimony, and interpretability.
+
+
+```{r, echo = FALSE, include = FALSE, warning = FALSE, message=FALSE}
+par(mfrow=c(1,2))
+plot(residuals(best_poly) ~ fitted(best_poly),
+     main="Polynomial Residuals vs Fitted", pch=16, col=rgb(0,0,0,.2))
+abline(h=0, col="red")
+
+plot(residuals(best_gam) ~ fitted(best_gam),
+     main="GAM Residuals vs Fitted", pch=16, col=rgb(0,0,0,.2))
+abline(h=0, col="red")
+```
+
+
+## Tree Based Method Results
+
+Tree-based approaches were implemented to compare the performance of parametric models against nonparametric methods. CART, bagging, random forests, and boosting were fitted to the data, allowing for flexible modeling of the response variable.
+
+```{r, echo = FALSE, include = FALSE, warning = FALSE, message=FALSE}
+# Ensure consistent factor types/levels for tree methods
+factor_vars <- c("race", "education", "region", "jobclass", "health", "health_ins", "maritl")
+
+# Make factors in TRAIN
+Wage.train <- Wage.train %>%
+  mutate(across(all_of(factor_vars), as.factor))
+
+# Make factors in TEST with levels of TRAIN
+Wage.test <- Wage.test %>%
+  mutate(
+    race       = factor(race,       levels = levels(Wage.train$race)),
+    education  = factor(education,  levels = levels(Wage.train$education)),
+    region     = factor(region,     levels = levels(Wage.train$region)),
+    jobclass   = factor(jobclass,   levels = levels(Wage.train$jobclass)),
+    health     = factor(health,     levels = levels(Wage.train$health)),
+    health_ins = factor(health_ins, levels = levels(Wage.train$health_ins)),
+    maritl     = factor(maritl,     levels = levels(Wage.train$maritl))
+  )
+
+```
+
+
+
+
+```{r, echo = FALSE, include = FALSE, warning = FALSE, message=FALSE}
+#### CART
+# Fit full regression tree on training data
+tree_fit <- tree(Resp ~ . -wage, data = Wage.train)
+summary(tree_fit)
+```
+
+
+```{r, echo = FALSE, include = FALSE, warning = FALSE, message=FALSE}
+# Plot full tree
+plot(tree_fit, type = "uniform")
+text(tree_fit, pretty = 0, cex = 0.5)
+```
+
+
+
+```{r, echo = FALSE, include = FALSE, warning = FALSE, message=FALSE}
+#### Prune Tree
+# Cross-validation to choose tree size
+cv_tree <- cv.tree(tree_fit)     # uses deviance 
+best_size <- cv_tree$size[which.min(cv_tree$dev)]
+
+# Prune to optimal size
+prune_fit <- prune.tree(tree_fit, best = best_size)
+
+plot(prune_fit)
+text(prune_fit, pretty = 0, cex = 0.7)
+```
+
+```{r, echo = FALSE, include = FALSE, warning = FALSE, message=FALSE}
+# Test MSE for pruned tree
+tree_pred <- predict(prune_fit, newdata = Wage.test)
+tree_mse  <- mean((tree_pred - Wage.test$Resp)^2)
+tree_mse
+```
+
+```{r, echo = FALSE, include = FALSE, warning = FALSE, message=FALSE}
+# Bagging
+
+p <- ncol(Wage.train) - 1  # number of predictors (exclude Resp)
+
+bag_fit <- randomForest(
+  Resp ~ .,
+  data       = Wage.train,
+  subset     = NULL,
+  mtry       = p,          # bagging: use ALL predictors at each split
+  importance = TRUE,
+  ntree      = 500         # like Boston example
+)
+
+bag_pred <- predict(bag_fit, newdata = Wage.test)
+bag_mse  <- mean((bag_pred - Wage.test$Resp)^2)
+bag_mse
+
+# Variable importance
+varImpPlot(bag_fit, type = 1, main = "Bagging: Variable Importance")
+```
+
+
+```{r, echo = FALSE, include = FALSE, warning = FALSE, message=FALSE}
+# Random Forest
+rf_fit <- randomForest(
+  Resp ~ .,
+  data       = Wage.train,
+  importance = TRUE          # so we can plot importance
+  # mtry left as default: p/3 for regression
+)
+
+rf_pred <- predict(rf_fit, newdata = Wage.test)
+rf_mse  <- mean((rf_pred - Wage.test$Resp)^2)
+rf_mse
+
+# Variable importance plot (like notes)
+par(mfrow = c(1,1))
+varImpPlot(rf_fit, type = 1, main = "Random Forest: Variable Importance")
+```
+
+
+
+```{r, echo = FALSE, include = FALSE, warning = FALSE, message=FALSE}
+# Boosting
+
+Wage.train_model <- Wage.train
+Wage.test_model  <- Wage.test
+Wage.train_model$maritl_original <- NULL
+Wage.test_model$maritl_original  <- NULL
+```
+
+```{r, echo = FALSE, include = FALSE, warning = FALSE, message=FALSE}
+boost_fit <- gbm(
+  Resp ~ .,
+  data              = Wage.train_model,
+  distribution      = "gaussian",
+  n.trees           = 5000,        # more trees; CV will pick the best
+  interaction.depth = 2,
+  shrinkage         = 0.01,        # typical learning rate
+  cv.folds          = 10,          # 10-fold CV
+  n.cores           = 1,           # or parallel if you want
+  verbose           = FALSE
+)
+
+```
+
+
+```{r, echo = FALSE, include = FALSE, warning = FALSE, message=FALSE}
+### Getting the CV MSE, Residual Variance, and effective degrees of freedom for all the tree based methods and putting them into one table
+## --- CART (pruned tree) ---
+
+cv_tree   <- cv.tree(tree_fit)     
+best_size <- cv_tree$size[which.min(cv_tree$dev)]
+prune_fit <- prune.tree(tree_fit, best = best_size)
+
+# Test MSE
+cart_test_mse <- mean((predict(prune_fit, newdata = Wage.test) - Wage.test$Resp)^2)
+
+# CV MSE: deviance / n as approximation
+cart_cv_mse <- min(cv_tree$dev) / nrow(Wage.train)
+
+# Residual variance on TRAIN
+cart_resid  <- Wage.train$Resp - predict(prune_fit, newdata = Wage.train)
+cart_resvar <- var(cart_resid)
+
+# Effective DF = number of terminal nodes
+cart_edf <- length(unique(prune_fit$where))
+
+
+## --- Bagging (randomForest with mtry = p) ---
+
+p <- ncol(Wage.train) - 1  # number of predictors
+
+# bag_fit was already fit above
+bag_test_mse <- mean((predict(bag_fit, newdata = Wage.test) - Wage.test$Resp)^2)
+
+# OOB MSE as CV MSE
+bag_cv_mse <- bag_fit$mse[bag_fit$ntree]
+
+# Residual variance on TRAIN
+bag_resid  <- Wage.train$Resp - predict(bag_fit, newdata = Wage.train)
+bag_resvar <- var(bag_resid)
+
+# EDF proxy from variance reduction
+train_var  <- var(Wage.train$Resp)
+bag_edf    <- nrow(Wage.train) * (1 - bag_cv_mse / train_var)
+
+
+## --- Random Forest ---
+
+rf_test_mse <- mean((predict(rf_fit, newdata = Wage.test) - Wage.test$Resp)^2)
+
+# OOB MSE
+rf_cv_mse <- rf_fit$mse[rf_fit$ntree]
+
+# Residual variance on TRAIN
+rf_resid  <- Wage.train$Resp - predict(rf_fit, newdata = Wage.train)
+rf_resvar <- var(rf_resid)
+
+# EDF proxy
+rf_edf <- nrow(Wage.train) * (1 - rf_cv_mse / train_var)
+
+
+## --- Boosting ---
+
+# Find best number of trees by CV
+best_iter <- gbm.perf(boost_fit, method = "cv", plot.it = FALSE)
+
+best_iter   # you can print this to see
+
+# CV MSE (average CV loss at best_iter)
+boost_cv_mse <- boost_fit$cv.error[best_iter]
+
+# Test MSE using best_iter
+boost_pred     <- predict(boost_fit, newdata = Wage.test_model, n.trees = best_iter)
+boost_test_mse <- mean((boost_pred - Wage.test_model$Resp)^2)
+
+# Residual variance on TRAIN
+boost_resid  <- Wage.train_model$Resp -
+  predict(boost_fit, newdata = Wage.train_model, n.trees = best_iter)
+boost_resvar <- var(boost_resid)
+
+# EDF proxy
+boost_edf <- best_iter * 2  # interaction.depth = 2
+
+
+## --- Final table of tree-based methods ---
+
+tree_results_full <- data.frame(
+  Model             = c("CART (Pruned)", "Bagging", "Random Forest", "Boosting"),
+  Test_MSE          = c(cart_test_mse,   bag_test_mse, rf_test_mse,   boost_test_mse),
+  CV_MSE            = c(cart_cv_mse,     bag_cv_mse,   rf_cv_mse,     boost_cv_mse),
+  Residual_Variance = c(cart_resvar,     bag_resvar,   rf_resvar,     boost_resvar),
+  Effective_DF      = c(cart_edf,        bag_edf,      rf_edf,        boost_edf)
+)
+
+tree_results_full[order(tree_results_full$Test_MSE), ]
+
+
+```
+
+
+```{r, echo = FALSE, warning = FALSE}
+library(knitr)
+library(kableExtra)
+
+# Your tree_results_full data frame (from earlier)
+tree_results_full <- data.frame(
+  Model             = c("CART (Pruned)", "Bagging", "Random Forest", "Boosting"),
+  Test_MSE          = c(3.527937, 1.471860, 1.603544, 1.419123),
+  CV_MSE            = c(4.252760, 1.596224, 1.512284, 1.640975),
+  Residual_Variance = c(3.4277357, 0.3190218, 0.3627335, 1.1903342),
+  Effective_DF      = c(8.000, 2233.342, 2239.581, 9834.000)
+)
+
+# Round values for presentation
+tree_results_rounded <- tree_results_full %>%
+  mutate(across(c(Test_MSE, CV_MSE, Residual_Variance, Effective_DF), ~ round(., 3)))
+
+# Create a nice kable table
+kable(tree_results_rounded, 
+      col.names = c("Model", "Test MSE", "CV MSE", "Residual Variance", "Effective DF"),
+      booktabs = TRUE, 
+      digits = 3,
+      caption = "Comparison of Tree Based Methods") %>%
+  kable_styling(full_width = FALSE, position = "center")
+
+```
+Looking at the table above, we can see that Boosting has the lowest Test MSE, but not the lowest CV MSE, residual variance, or effective degrees of freedom.
+
+- CV MSE: Random Forest has the lowest (1.512), slightly better than Boosting (1.641).
+- Residual Variance: Bagging and Random Forest have much lower values (0.319 and 0.363), indicating they fit the training data better than Boosting (1.190).
+- Effective Degrees of Freedom: CART (Pruned) is by far the simplest, with only 8, while Boosting is the most complex (9834).
+
+So, Boosting is best for predicting on new data (lowest Test MSE), but it is more complex and has higher training error than Bagging and Random Forest. The low residual variance and CV MSE for Bagging and Random Forest suggest they may be more stable and less prone to overfitting, but they don't generalize quite as well to the test set as Boosting in this case. CART, although by far the simplest, performed the worst among the four tree-based methods. 
+
+### Pros of Tree Based methods:
+
+Tree ensembles automatically capture nonlinear and complex interactions without requiring explicit specification of polynomial terms or interaction effects (like we have done for the GAMs and polynomial regression models), which is appealing because of the interaction between marital status, age, and log(wage) observed in the exploratory analysis. They also handle mixed numeric and categorical predictors naturally and give variable-importance summaries that can highlight which demographic and job-related features drive predictions.
+
+### Cons of Tree Based methods:
+
+However, despite this flexibility, none of the tree-based models are able to reach the very low test MSE achieved by the best polynomial model, nor the slightly higher but still competitive GAM, meaning they offer no predictive advantage here. In addition, the effective degrees of freedom for ensembles such as boosting are many orders of magnitude larger than those of the polynomial and GAM models, indicating a much more complex fit with little to show in terms of improved accuracy.
+
+### Interpretability and stability:
+
+The parametric models are also preferred due to their interpretability: the polynomial model derives a concise equation with a small number of coefficients, whereas boosted trees, for example, need to aggregate thousands of small trees whose combined effect is extremely difficult to explain qualitatively. Moreover, the GAM and polynomial fits exhibit stable behavior under cross-validation with relatively low CV MSE and residual variance, while the tree ensembles introduce additional tuning complexity (number of trees, depth, learning rate) without giving any clearly better bias–variance trade-offs.
+
+### Include Table Here for 4 Methods
+
+- Test MSE
+- CV MSE
+- Residual Variance
+- Effective Degrees of Freedom
+
+
+Short summary of best one.
+
+### Comparison to Parametric Models 
+
+Explain pros but mostly cons because it doesn't perform as well
+
+
+## Model Evaluation
+
+- Explain how close the polynomial and GAM are in results (compare bias and variance). Lowkey this is basically the section I did above (Summary Comparison of Best Polynomial and GAM Models) so maybe it would be better here -- perhaps a copy paste scenario. You'd have to add the tree results too, just pick the best of the tree methods (boosting I think)
+
+- Looks like Polynomial has the edge in Test MSE and CV MSE. Although it barely loses the variance battle, its effective DF is so much lower than the GAM spline method. 
+
+- Talk about explainability of polynomial method vs others.
+
+- Write out final Model Equation
+
+## Appendix Stuff
+
+
+
