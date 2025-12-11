@@ -38,7 +38,7 @@ Our goal is to model the relationship between workers’ wages and a set of demo
 
 # 2. Data Description and Cleaning
 
-## 2.1 Dataset Structure
+**Dataset Structure**
 
 The Wage dataset includes 3000 observations with 13 variables. Table 1 shows the description and measurement type for each variable.
 ```{r echo=FALSE, message=FALSE, warning=FALSE}
@@ -70,11 +70,11 @@ kable(var_summary, caption = "Variable Descriptions for Wage Dataset", booktabs 
   kable_styling(full_width = TRUE, font_size = 7) %>%   # make it wider and smaller
   column_spec(2, width = "25em", extra_css = "word-wrap: break-word; white-space: normal;") %>% # wider Description
   column_spec(1, width = "5em") %>%                     # Variable column
-  column_spec(3, width = "7em")                        # Type column
+  column_spec(3, width = "11em")                        # Type column
 
 ```
 
-## 2.2 Data Cleaning & Preprocessing
+**Data Cleaning & Preprocessing**
 
 All original variables are complete. The appended variable Resp contains missing values. To examine potential bias, we created an indicator variable marking whether Resp was missing. Comparing summary statistics of numerical predictors between missing and non-missing Resp cases showed similar mean values, suggesting that the missingness is likely missing at random (Table 2). Therefore, removing rows with missing Resp will not bias the analysis. We also checked for duplicate rows and found none. Thus, our final cleaned dataset excludes the identifier variable X and all rows with missing Resp.
 ```{r echo=FALSE, message=FALSE, warning=FALSE}
@@ -102,7 +102,8 @@ data$health_ins <- as.factor(data$health_ins)
 # Check duplicates
 sum(duplicated(data))
 ```
-```{R}
+
+```{R echo=FALSE, message=FALSE, warning=FALSE} 
 data_clean <- data %>%
   dplyr::select(-X) %>%
   dplyr::filter(!is.na(Resp))
@@ -114,25 +115,22 @@ data_clean <- data %>%
 
 ## 3.1 Distribution of the Response Variable (Resp)
 
-Before examining predictors, we examine the shape of the response variable. The histogram below shows that **Resp is clearly bimodal**, with two distinct peaks.
+Before examining predictors, we examine the shape of the response variable. The histogram below shows that **Resp is clearly bimodal**, with two distinct peaks. The strong **bimodal distribution** suggests that a linear mean structure may not fully capture the data, and some predictors may shift individuals into one mode or the other. This motivates the need for polynomial and semi-parametric models.
 
-```{R echo=FALSE, message=FALSE, warning=FALSE, fig.width=8, fig.height=4}
+```{r echo=FALSE, message=FALSE, warning=FALSE, fig.width=7, fig.height=1.5}
 ggplot(data_clean, aes(x = Resp)) +
   geom_histogram(binwidth = 0.3, fill = "grey", color = "black") +
   theme_minimal() +
   labs(title = "Distribution of Resp (Response Variable)",
-        x = "Resp", y = "Count")
+        x = "Resp", y = "Count")+
+  theme(
+    plot.title = element_text(size = 8),   # smaller title
+    axis.title = element_text(size = 7),    # smaller axis labels
+    axis.text = element_text(size = 6)      # smaller axis tick labels
+  )
 ```
-**Interpretation**
 
-The strong **bimodal distribution** suggests that:
-
-* A linear mean structure may not fully capture the data.
-* Some predictors may shift individuals into one mode or the other.
-
-This motivates the need for polynomial and semi-parametric models.
-
-## 3.2 Summary of Numeric Variables & Categorical Variables
+## 3.2 Numeric Variables & Categorical Variables
 
 The variable wage shows a wide range, with a median that is lower than the mean, indicating the presence of some high earners. The variable logwage is the logarithmic transformation of wage, which reduces skewness and makes the distribution more symmetric (Table 3). The categorical variables were summarized by their most frequent categories (Table 4).
 
@@ -167,9 +165,9 @@ kable(
   booktabs = TRUE,
   format = "latex"
 ) %>%
-  kable_styling(font_size = 7, full_width = TRUE, latex_options = c("hold_position")) %>%
+  kable_styling(font_size = 6.5, latex_options = c("hold_position")) %>%
   column_spec(1, width = "1cm") %>%
-  column_spec(2:5, width = "2.5cm")
+  column_spec(2:5, width = "1cm")
 ```
 
 ```{r echo=FALSE, message=FALSE, warning=FALSE}
@@ -196,19 +194,14 @@ kable(mode_summary_t,
   row_spec(1:nrow(mode_summary_t), extra_css = "line-height: 0.9;")
 ```
 
-## 3.3 Correlation Analysis
+
+**Correlation Analysis (Appendix 1)**
 
 The variables wage and logwage are highly correlated, as expected due to the log transformation. The response variable Resp shows moderate positive correlations with wage, logwage, and age, suggesting that these variables may be influential in predicting Resp. The year variable shows a weak correlation with Resp, indicating limited time-based effects.
 
-## 3.4 Numeric Variables vs Response
+**Numeric Variables vs Response (Appendix 2)**
 
-From scatterplot matrix, there is a positive, non-linear relationship. Wages tend to increase with age up to around 60, after which they seem to level off or slightly decrease. The variance also appears to increase with age. The plot also confirms that Resp is highly correlated with logwage and wage, and positively related to age. 
-
-When we specifically look at the relationship between Resp and the continuous predictors:
-
-* age vs. Resp: The three apparent horizontal lines or clusters are most likely caused by the presence of a strong categorical predictor. A small number of highly influential categories in a predictor variable can create distinct, separated bands in a scatter plot when plotted against any continuous variable (like age).
-* logwage/Wage vs. Resp: The plots are separated into distinct clusters primarily due to the influence of a strong categorical predictor.
-
+The scatterplot matrix shows a positive, non-linear relationship: wages increase with age up to around 60, then level off or slightly decrease, with variance also growing with age. **Resp is highly correlated with wage and logwage and positively associated with age**. The clusters in the age versus Resp plot likely result from a strong categorical predictor, which can create distinct bands when plotted against a continuous variable. Similarly, the wage and logwage versus Resp plots show clusters influenced by the same categorical predictor.
 
 ```{r echo=FALSE, message=FALSE, warning=FALSE, fig.width=8, fig.height=2}
 # 1 row, 5 columns layout
@@ -232,17 +225,17 @@ for(v in numeric_cols) {
 }
 ```
 
-## 3.5 Categorical Variables vs Response
+**Categorical Variables vs Response (Appendix 3)**
 
 * education: Clear, strong separation between levels. Higher education corresponds to higher Resp.
-* maritl (Married vs Unmarried): This is one of the strongest relationships in the data. Married individuals disproportionately fall into the upper mode of the Resp distribution. This key observation may explain the bimodal distribution and motivates the strong reliance on the marital interaction term in the subsequent modeling sections.
+* maritl (Married vs Unmarried): Marital status shows one of the strongest relationships in the data, with married individuals disproportionately appearing in the upper mode of the Resp distribution. This pattern likely contributes to the bimodal distribution shape.
 * race, health, health_ins: These show weaker group separation. Their effects appear smaller and do not meaningfully explain the bimodality of Resp.
 * jobclass: Practically no separation in Resp; likely not an important predictor.
 * Outlier Identification: The outliers show data points with unusually low or high wages for their respective categories, which may warrant further investigation for potential influential observations.
 
-## 3.6 Recoding Marital Status (Married vs. Unmarried)
+## 3.3 Recoding Marital Status (Married vs. Unmarried)
 
-The boxplots on section 3.5 show a clear distinction between the married and unmarried classes of the maritl variable in relationship to the response variable. After coding the maritl variable as binary (1 = Married, 0 = Unmarried), plotting the response and coding it according to the new binary variable, we see that the the two distinct modes in the bimodal response appear to be explained by marital status.
+The boxplots below show a clear distinction between the married and unmarried classes of the maritl variable in relationship to the response variable. After coding the maritl variable as binary (1 = Married, 0 = Unmarried), plotting the response and coding it according to the new binary variable, we see that the the two distinct modes in the bimodal response appear to be explained by marital status. Therefore, for the remainder of this report, maritl will be modeled as a binary variable.
 
 ```{r, include = FALSE}
 # Save original copy of marital status to use for plotting
@@ -253,8 +246,16 @@ data_clean$maritl <- ifelse(data_clean$maritl == "2. Married","Married", "Not Ma
 data_clean$maritl <- factor(data_clean$maritl,levels = c("Not Married", "Married"))
 ```
 
-```{r, echo = FALSE, message = FALSE, fig.align='center', warning = FALSE, out.width= "60%"}
-ggplot(data_clean, aes(x = Resp, fill = maritl, color = maritl)) +
+```{r, echo = FALSE, message = FALSE, fig.align='center', warning = FALSE, out.width= "100%", fig.height = 2}
+small_theme <- theme(
+  plot.title = element_text(size = 7),
+  axis.title = element_text(size = 6),
+  axis.text  = element_text(size = 5),
+  legend.title = element_text(size = 6),
+  legend.text  = element_text(size = 6)
+)
+
+p_hist <- ggplot(data_clean, aes(x = Resp, fill = maritl, color = maritl)) +
   geom_histogram(position = "identity", alpha = 0.4, bins = 25) +
   scale_fill_manual(values = c("Not Married" = "#FF9999", "Married" = "#66CCCC")) +
   scale_color_manual(values = c("Not Married" = "#FF7777", "Married" = "#55BBBB")) +
@@ -263,42 +264,43 @@ ggplot(data_clean, aes(x = Resp, fill = maritl, color = maritl)) +
     x = "Resp",
     y = "Count"
   ) +
-  theme_minimal()
+  theme_minimal() +
+  small_theme
+
+p_box_before <- ggplot(data_clean, aes(x = maritl_original, y = Resp)) +
+  geom_boxplot(fill = "#cccccc", outlier.size = 0.5) +
+  labs(title = "Before Recoding",
+       x = "Original Marital Status",
+       y = "Resp") +
+  theme_minimal() +
+  small_theme+
+  theme(
+    axis.text.x = element_text(angle = 45, hjust = 1)
+)
+
+p_box_after <- ggplot(data_clean, aes(x = maritl, y = Resp)) +
+  geom_boxplot(fill = "#66CCCC", outlier.size = 0.5) +
+  labs(title = "After Recoding",
+       x = "Recoded Marital Status",
+       y = "Resp") +
+  theme_minimal() +
+  small_theme
+
+(p_hist | p_box_before | p_box_after)
 ```
-Therefore, for the remainder of this report, maritl will be modeled as a binary variable.
 
-```{r, echo=FALSE, out.width = "60%", fig.align='center'}
-par(mfrow = c(1,2))
-
-boxplot(Resp ~ maritl_original, data = data_clean,
-        main = "Before Recoding",
-        xlab = "Original Marital Status",
-        ylab = "Resp")
-
-boxplot(Resp ~ maritl, data = data_clean,
-        main = "After Recoding",
-        xlab = "Recoded Marital Status",
-        ylab = "Resp")
-
-par(mfrow = c(1,1))
-```
-
-
-
-## 3.8 Understanding Interactions
+## 3.4 Understanding Interactions
 
 **Resp vs log(Wage)**
 
 While the model without marital status shows one smooth upward trend, the inclusion of marital status produces two distinct trajectories, especially at higher wage levels, illustrating a meaningful interaction effect.
-```{r, echo=FALSE, fig.width=14, fig.height=4, fig.align='center', message=FALSE, warning=FALSE}
-
-
+```{r, echo=FALSE, fig.width=10, fig.height=2, fig.align='center', message=FALSE, warning=FALSE}
 # WITHOUT interaction: one smooth curve, ignoring marital status
 logwage_maritl_plot <- ggplot(data_clean, aes(x = logwage, y = Resp)) +
   geom_point(alpha = 0.05, size = 0.4) +
   geom_smooth(method = "loess", se = FALSE, linewidth = 1) +
   labs(title = "Resp vs logwage",
-       x = "log(wage)", y = "Resp") +
+        x = "log(wage)", y = "Resp") +
   theme_minimal(base_size = 10) +
   theme(
     plot.title = element_text(hjust = 0.5)
@@ -310,7 +312,7 @@ plot_cat <- function(var) {
     geom_point(alpha = 0.05, size = 0.4) +
     geom_smooth(method = "loess", se = FALSE, linewidth = 1) +
     labs(title = paste("Resp vs Logwage by", gsub("_", " ", var)),
-         x = "log(wage)", y = "Resp") +
+        x = "log(wage)", y = "Resp") +
     theme_minimal(base_size = 10) +
     theme(legend.position = "right", plot.title = element_text(hjust = 0.5))
 }
@@ -320,18 +322,17 @@ plot_cat <- function(var) {
 # The creation of the new factor is done in one step to avoid the unused argument error.
 data_clean <- data_clean %>%
   mutate(
-    # Create the new factor directly
     maritl_simplified = factor(
       case_when(
-        as.numeric(maritl) == 2 ~ "Married",
-        TRUE ~ "Not Married" # 1, 3, 4, 5 are grouped here
+        as.numeric(maritl_original) == 2 ~ "Married", 
+        TRUE ~ "Not Married" 
       )
     )
   )
 
 # --- Original Plot (5-Level Marital Status) ---
-# This is your original plot_cat("maritl")
-logwage_maritl_plot_int_5lvl <- plot_cat("maritl") +
+# FIX: Changed "maritl" to "maritl_original" to use the 5-level factor
+logwage_maritl_plot_int_5lvl <- plot_cat("maritl_original") +
   labs(title = "5-Level Marital Status") +
   guides(color = guide_legend(title = "maritl"))
 
@@ -347,13 +348,11 @@ logwage_maritl_plot_int_2lvl <- plot_cat("maritl_simplified") +
 (logwage_maritl_plot | logwage_maritl_plot_int_5lvl | logwage_maritl_plot_int_2lvl)
 ```
 
+
 **Resp vs Age**
 
 Including marital status reveals an interaction effect, where married individuals display consistently higher and more rapidly increasing response values across age.
-```{r, echo=FALSE, fig.width=14, fig.height=4, fig.align='center', message=FALSE, warning=FALSE}
-
-# Note: The data manipulation to create 'maritl_simplified' is assumed to have run previously.
-
+```{r, echo=FALSE, fig.width=10, fig.height=2, fig.align='center', message=FALSE, warning=FALSE}
 # --- Plotting Function (Re-defined for completeness) ---
 plot_age_cat <- function(var) {
   ggplot(data_clean, aes(x = age, y = Resp, color = .data[[var]])) +
@@ -374,13 +373,12 @@ age_maritl_plot <- ggplot(data_clean, aes(x = age, y = Resp)) +
   theme( plot.title = element_text(hjust = 0.5))
 
 # --- 2. Plot WITH Original 5-Level Marital Status ---
-age_maritl_plot_int_5lvl <- plot_age_cat('maritl') +
+age_maritl_plot_int_5lvl <- plot_age_cat('maritl_original') +
   labs(title = "Resp vs Age (5-Level Maritl)") +
   guides(color = guide_legend(title = "maritl"))
 
 
 # --- 3. Plot WITH Simplified 2-Level Marital Status ---
-# Use the existing 'maritl_simplified' column
 age_maritl_plot_int_2lvl <- plot_age_cat('maritl_simplified') +
   labs(title = "Resp vs Age (2-Level Maritl)") +
   guides(color = guide_legend(title = "maritl"))
@@ -391,18 +389,17 @@ age_maritl_plot_int_2lvl <- plot_age_cat('maritl_simplified') +
 (age_maritl_plot | age_maritl_plot_int_5lvl | age_maritl_plot_int_2lvl)
 ```
 
-
 # 4. Modeling Strategy and Results
 
 ## 4.1 Data Partitioning and Modeling Approach
 
 The cleaned data ($n=2,940$) was partitioned into an **80% training set** ($\text{Wage.train}$) for model fitting and hyperparameter tuning, and a **20% test set** ($\text{Wage.test}$) for unbiased performance evaluation.Our modeling strategy moved from simple parametric models to complex non-parametric methods to find the optimal balance between predictive accuracy (low Test MSE) and statistical inference (interpretability):
 
-* **Baseline & Regularized Models:** (MLR, Ridge, LASSO) provide a simple linear benchmark.
 * **Interpretable Non-Linear Models:** (Polynomial Regression, GAMs) capture non-linear trends and key interactions.
 * **Non-Parametric Ensemble Models:** (Random Forest, Boosting) offer maximum predictive power by capturing arbitrary interactions.
 
 ```{r, include= FALSE}
+set.seed(4620)
 n <- nrow(data_clean)
 train_size <- round(n * 0.8) # Create an 80/20 split
 train <- sample(1:n,train_size, replace = FALSE)
@@ -412,20 +409,11 @@ Wage.train <- data_clean[train, ]
 Wage.test  <- data_clean[test, ]
 ```
 
-## 4.2 Performance of Interpretable Non-Linear Models
+## 4.2 Interpretable Non-Linear Models
 
 ### 4.2.1 Polynomial Regression:
 
-Polynomial regression was first used as a simple and interpretable way to introduce curvature in the model.
-
-* Captures curvature without fully abandoning linear structure
-* Used as a first benchmark for nonlinearity
-* Fit with and without marital-status interaction terms
-* Helps determine whether interaction effects meaningfully improve model accuracy
-
-**Polynomial Regression Results**
-
-The Best Polynomial Model used a third-degree polynomial for $\text{logwage}$ and a second-degree polynomial for $\text{age}$, with both terms fully interacting with $\text{maritl}$ (recoded as Married/Not Married), plus all other categorical predictors.
+Polynomial regression was first used as a simple and interpretable way to introduce curvature into the model, capturing **nonlinear patterns** while **preserving a largely linear structure** and serving as a **baseline for assessing nonlinearity**. Models were fit both with and without interaction terms for marital status to evaluate whether these interactions improved accuracy. The best-performing polynomial model used a third-degree polynomial for $\log(\text{wage})$ and a second-degree polynomial for $\text{age}$, with both terms fully interacting with marital status (recoded as Married/Not Married), along with all other categorical predictors.
 
 $$\text{Resp} \sim \text{poly}(\text{logwage}, 3) \times \text{maritl} + \text{poly}(\text{age}, 2) \times \text{maritl} + \text{All Categoricals}$$
 
@@ -454,8 +442,6 @@ poly_both_no_int <- lm(
   Resp ~ poly(logwage, 3) + poly(age, 2),
   data = Wage.train
 )
-
-
 ```
 
 ```{r, echo = FALSE, warning=FALSE}
@@ -500,10 +486,8 @@ mse_results <- data.frame(
                mse_poly_full)
 )
 
-
 kable(mse_results, caption = "log(Wage) and Age Polynomial Test MSE Results") %>%
-  kable_styling(full_width = FALSE)
-
+  kable_styling(full_width = FALSE, font_size = 7)
 ```
 
 The results show that adding nonlinear terms for both predictors does not improve performance by much unless interaction effects are included, indicating that subgroup differences by marital status drive much of the predictive gain.
@@ -528,13 +512,13 @@ mse_full_all_results <- data.frame(
 )
 
 kable(mse_full_all_results, caption = "Full Model Polynomial Regression Test MSE Results") %>%
-  kable_styling(full_width = FALSE)
+  kable_styling(full_width = FALSE, font_size = 7)
 
 ```
 
 **Introducing Categorical Predictors**
 
-In an effort to improve the model's performance, the age and log(Wage) model with interaction effects is set as the baseline. From there, various categorical values were tested to gauge an improvement in Test MSE.
+In an effort to improve the model's performance, the age and log(Wage) model with interaction effects is set as the baseline. From there, various categorical values were tested to gauge an improvement in Test MSE. The top-performing polynomial models all include the full or near-full set of categorical predictors, suggesting that demographic and job-related characteristics contribute additional explanatory value beyond nonlinear age and wage effects.
 
 ```{r, echo = FALSE, warning = FALSE}
 # cat_vars: character vector of categorical variables to consider
@@ -609,34 +593,14 @@ poly_subset_results %>%
     caption = "Top 5 Polynomial Models by Test MSE",
     digits = 3
   ) %>%
-  kable_styling(full_width = FALSE)
+  kable_styling(full_width = FALSE, font_size = 7)
 
 ```
 
-
-The top-performing polynomial models all include the full or near-full set of categorical predictors, suggesting that demographic and job-related characteristics contribute additional explanatory value beyond nonlinear age and wage effects.
-
-
-
-
-
-
 ### 4.2.2 Generalized Addative Models (GAM):
 
-GAMs were implemented to address the limitations of polynomial models by learning smooth, data-driven functions rather than relying on fixed polynomial shapes.
-
-- Allows for smooth functions rather than assuming polynomial shape
-- Supports different smooths by marital status, aligning with observed interaction effects
-- Provides interpretability while modeling nonlinear patterns more accurately
-- Iteratively expanded to include additional categorical predictors (education, race, jobclass)
-
-
-## Generalized Addative Models (GAM) Results:
-
-A Generalized Additive Model (GAM) was then fit to replicate the baseline structure used in the polynomial models, incorporating log(Wage) and Age along with their interactions with marital status. Unlike polynomial regression, GAM allows the use of smoothing spline functions, enabling a flexible, non-parametric fit that can better capture nonlinear patterns without imposing a fixed global shape.
-
-The Best GAM used smoothing splines (s) for $\text{logwage}$ and $\text{age}$, with their smooth functions varying based on $\text{maritl}$ (known as $\text{gam12}$ in the internal analysis):
-
+GAMs were introduced to address the limitations of polynomial models by learning smooth, data-driven functions rather than relying on fixed polynomial shapes, allowing flexible nonlinear modeling while maintaining interpretability. They also permit different smooths by marital status, aligning with previously observed interaction effects, and the model was later expanded to include additional categorical predictors such as education, race, and job class. A GAM was then fitted to replicate the baseline structure of the polynomial models using  $\log(\text{wage})$ and Age with their marital-status interactions. Unlike polynomial regression, **GAM uses smoothing splines to provide a flexible, non-parametric fit that better captures nonlinear patterns without imposing a global functional form**. The **best model** employed smoothing splines for $\log(\text{wage})$ and $\text{age}$, with smooth functions varying by marital status (referred to as gam12 in the internal analysis):
+ 
 $$\text{Resp} \sim s(\text{logwage}, \text{by} = \text{maritl}) + s(\text{age}, \text{by} = \text{maritl}) + \text{All Categoricals}$$
 ```{r, echo = FALSE, warning = FALSE, message = FALSE}
 # Assumes mgcv is loaded: library(mgcv)
@@ -698,7 +662,6 @@ test_gam_subsets <- function(train, test, cat_vars) {
 }
 ```
 
-
 ```{r, echo = FALSE, warning = FALSE, message = FALSE}
 cat_vars <- c("education", "race", "jobclass", "health", "health_ins")
 
@@ -715,7 +678,7 @@ gam_subset_results %>%
     caption = "Top 5 GAM Models by Test MSE",
     digits = 3
   ) %>%
-  kable_styling(full_width = FALSE)
+  kable_styling(full_width = FALSE, font_size = 7)
 ```
 
 
@@ -723,7 +686,7 @@ Similar to polynomial regression, these results suggest that the GAM framework b
 
 ### Comparison to Polynomial Regression
 
-Compared to the polynomial regression models, the GAM produced slightly higher Test MSE, likely because its smoother spline-based functions constrain flexibility and introduce bias by not attempting to capture sharp curvature in the data. This slight increase in bias does result in a slightly lower residual variance, as observed in the table below.
+Compared to the polynomial regression models, the GAM produced slightly higher Test MSE, likely because its smoother spline-based functions constrain flexibility and introduce bias by not attempting to capture sharp curvature in the data. This slight increase in bias does result in a slightly lower residual variance, as observed in table 8. The best polynomial model achieves slightly lower test MSE (0.976 vs 0.986) and lower 10-fold CV MSE (1.031 vs 1.056) than the GAM, indicating marginally better out-of-sample performance and stability with fewer effective degrees of freedom (22 vs 31.11). Although the GAM attains a very slightly lower residual variance, this comes at the cost of greater complexity, so the polynomial model offers a better balance of accuracy, parsimony, and interpretability.
 
 ```{r, echo = FALSE, include = FALSE, warning = FALSE, message = FALSE}
 # Best GAM with all categorical predictors
@@ -742,7 +705,6 @@ pred_gam_best_full <- predict(gam_best_full, newdata = Wage.test)
 mse_gam_best_full  <- mean((pred_gam_best_full - Wage.test$Resp)^2)
 ```
 
-
 ```{r, echo = FALSE, include = FALSE, warning = FALSE, message=FALSE}
 
 # Distinguish best models for comparison
@@ -760,7 +722,7 @@ variance_compare <- data.frame(
 
 variance_compare %>%
   kable(caption = "Residual Variance Comparison") %>%
-  kable_styling(full_width = FALSE)
+  kable_styling(full_width = FALSE, font_size = 7)
 
 ```
 
@@ -792,17 +754,14 @@ kable(df_compare,
       caption = "Comparison of Degrees of Freedom: Polynomial vs. GAM",
       digits = 2,
       align = "c") %>%
-  kable_styling(full_width = FALSE, position = "center")
+  kable_styling(full_width = FALSE, position = "center", font_size = 7)
 
 ```
-
-
-
 
 ```{r, echo = FALSE, warning = FALSE, message = FALSE}
 # Cross Validation for Polynomial
 poly_cv <- function(formula, data, k = 10) {
-  set.seed(4620)  # optional, for reproducibility
+  set.seed(4620)  
   folds <- sample(rep(1:k, length.out = nrow(data)))
   cv_errors <- numeric(k)
   
@@ -855,7 +814,6 @@ gam_cv_val <- gam_cv(
 
 ```
 
-
 ```{r, echo = FALSE, message = FALSE, warning = FALSE, include = FALSE}
 cv_compare <- data.frame(
   Model = c("Best Polynomial", "Best GAM"),
@@ -864,7 +822,7 @@ cv_compare <- data.frame(
 
 cv_compare %>%
   kable(caption = "Cross Validation Comparison") %>%
-  kable_styling(full_width = FALSE)
+  kable_styling(full_width = FALSE, font_size = 7)
 ```
 
 ```{r, echo = FALSE, message = FALSE, warning = FALSE}
@@ -890,28 +848,11 @@ model_compare <- data.frame(
 
 model_compare %>%
   kable(caption = "Comparison of Best Polynomial and GAM Models") %>%
-  kable_styling(full_width = FALSE, position = "center")
+  kable_styling(full_width = FALSE, position = "center", font_size = 7)
 ```
 
 
-The best polynomial model achieves slightly lower test MSE (0.976 vs 0.986) and lower 10-fold CV MSE (1.031 vs 1.056) than the GAM, indicating marginally better out-of-sample performance and stability with fewer effective degrees of freedom (22 vs 31.11). Although the GAM attains a very slightly lower residual variance, this comes at the cost of greater complexity, so the polynomial model offers a better balance of accuracy, parsimony, and interpretability.
-
-
-```{r, echo = FALSE, include = FALSE, warning = FALSE, message=FALSE}
-par(mfrow=c(1,2))
-plot(residuals(best_poly) ~ fitted(best_poly),
-     main="Polynomial Residuals vs Fitted", pch=16, col=rgb(0,0,0,.2))
-abline(h=0, col="red")
-
-plot(residuals(best_gam) ~ fitted(best_gam),
-     main="GAM Residuals vs Fitted", pch=16, col=rgb(0,0,0,.2))
-abline(h=0, col="red")
-```
-
-
-
-
-## Tree Based Method Results
+## 4.3 Tree Based Method
 
 Tree-based approaches were implemented to compare the performance of parametric models against nonparametric methods. CART, bagging, random forests, and boosting were fitted to the data, allowing for flexible modeling of the response variable.
 
@@ -1041,7 +982,6 @@ boost_fit <- gbm(
   n.cores           = 1,           # or parallel if you want
   verbose           = FALSE
 )
-
 ```
 
 
@@ -1135,13 +1075,10 @@ tree_results_full <- data.frame(
 )
 
 tree_results_full[order(tree_results_full$Test_MSE), ]
-
-
 ```
 
 
 ```{r, echo = FALSE, warning = FALSE}
-
 # Your tree_results_full data frame (from earlier)
 tree_results_full <- data.frame(
   Model             = c("CART (Pruned)", "Bagging", "Random Forest", "Boosting"),
@@ -1161,8 +1098,7 @@ kable(tree_results_rounded,
       booktabs = TRUE, 
       digits = 3,
       caption = "Comparison of Tree Based Methods") %>%
-  kable_styling(full_width = FALSE, position = "center")
-
+  kable_styling(full_width = FALSE, position = "center", font_size = 7)
 ```
 Looking at the table above, we can see that Boosting has the lowest Test MSE, but not the lowest CV MSE, residual variance, or effective degrees of freedom.
 
@@ -1172,17 +1108,15 @@ Looking at the table above, we can see that Boosting has the lowest Test MSE, bu
 
 So, Boosting is best for predicting on new data (lowest Test MSE), but it is more complex and has higher training error than Bagging and Random Forest. The low residual variance and CV MSE for Bagging and Random Forest suggest they may be more stable and less prone to overfitting, but they don't generalize quite as well to the test set as Boosting in this case. CART, although by far the simplest, performed the worst among the four tree-based methods. 
 
-### Pros of Tree Based methods:
+### Pros and Cons of Tree Based methods:
 
-Tree ensembles automatically capture nonlinear and complex interactions without requiring explicit specification of polynomial terms or interaction effects (like we have done for the GAMs and polynomial regression models), which is appealing because of the interaction between marital status, age, and log(wage) observed in the exploratory analysis. They also handle mixed numeric and categorical predictors naturally and give variable-importance summaries that can highlight which demographic and job-related features drive predictions.
+**Pros:** Tree ensembles can automatically capture nonlinear and complex interactions without explicitly specifying polynomial terms or interactions, which is useful given the interplay between marital status, age, and log(wage) observed in the exploratory analysis. They handle mixed numeric and categorical predictors naturally and provide variable-importance summaries to identify key features driving predictions.
 
-### Cons of Tree Based methods:
+**Cons:** Despite this flexibility, tree-based models do not achieve the low Test MSE of the best polynomial model or the competitive performance of the GAM, offering no predictive advantage. Additionally, their effective degrees of freedom are vastly higher than those of the polynomial and GAM models, reflecting a far more complex fit without meaningful improvement in accuracy.
 
-However, despite this flexibility, none of the tree-based models are able to reach the very low test MSE achieved by the best polynomial model, nor the slightly higher but still competitive GAM, meaning they offer no predictive advantage here. In addition, the effective degrees of freedom for ensembles such as boosting are many orders of magnitude larger than those of the polynomial and GAM models, indicating a much more complex fit with little to show in terms of improved accuracy.
+# 5. Conclusion and Best Model Selection
 
-### Interpretability and stability:
-
-The parametric models are also preferred due to their interpretability: the polynomial model derives a concise equation with a small number of coefficients, whereas boosted trees, for example, need to aggregate thousands of small trees whose combined effect is extremely difficult to explain qualitatively. Moreover, the GAM and polynomial fits exhibit stable behavior under cross-validation with relatively low CV MSE and residual variance, while the tree ensembles introduce additional tuning complexity (number of trees, depth, learning rate) without giving any clearly better bias–variance trade-offs.
+The final model selection is based on a rigorous comparison of the best-performing models across three families, evaluating both predictive accuracy (Test MSE/CV MSE) and model complexity/stability (Effective Degrees of Freedom and Residual Variance).
 
 ```{r, echo = FALSE, message = FALSE, warning = FALSE}
 best_models <- data.frame(
@@ -1217,62 +1151,38 @@ best_models %>%
     caption = "Summary of Best Polynomial, GAM, and Tree-Based Models",
     booktabs = TRUE
   ) %>%
-  kable_styling(full_width = FALSE, position = "center")
+  kable_styling(full_width = FALSE, position = "center", font_size = 7)
 
 ```
 
+**Analysis of Model Performance and Trade-offs:**
+
+**1. Best Polynomial Model:**
+
+The best polynomial model shows the strongest predictive performance, with the **lowest Test MSE (0.976)** and **10-fold CV MSE (1.031)**, indicating accuracy and stability. It balances fit and complexity well, with low residual variance (1.013) and the **lowest Effective Degrees of Freedom (22.00)**, reflecting low bias and high parsimony. Its concise algebraic form also makes it the most interpretable, making it the preferred choice for statistical inference and clear communication.
+
+**2. Generalized Additive Model (GAM):**
+
+The GAM has slightly higher Test MSE (**0.986**) and CV MSE (**1.056**) than the polynomial model. Its smoothing functions offer more flexibility, giving a slightly lower residual variance (**1.010**) and better fit to the training data. However, this comes with greater complexity (Effective DF = **31.11**) without improving generalization, resulting in minor bias reduction but increased variance, making it a less optimal choice for prediction and practical use.
+
+**3. Best Tree-Based Model (Boosting):**
+
+The tree-based boosting model performs worse than the other approaches, with a Test MSE of **1.390**. It is highly complex (Effective DF = **9990.00**) and unstable, as shown by the large gap between its Test MSE and CV MSE (**1.565**), indicating severe overfitting. Its complexity and poor interpretability make it unsuitable for reliable prediction or meaningful statistical insights.
+
+
+**Final Conclusion:**
+
+The **Best Polynomial Model** remains the superior choice for this dataset.
+
+It clearly and demonstrably outperforms all other models in the primary metrics of interest (lowest Test MSE and lowest CV MSE) while maintaining the lowest Effective DF. The Polynomial Model's combination of high accuracy, stability, and interpretability offers the best overall solution, minimizing the risk of over-fitting and maximizing the potential for clear inference.
+
+
+\newpage
 
 # Appendix
 
+
 **Appendix 1**
-\footnotesize
-```{r echo=FALSE, message=FALSE, warning=FALSE}
-summary(lm(Resp ~ age * education, data = data_clean))
-summary(lm(Resp ~ age * jobclass, data = data_clean))
-summary(lm(Resp ~ age * health, data = data_clean))
-summary(lm(Resp ~ age * maritl, data = data_clean))
-summary(lm(Resp ~ age * health_ins, data = data_clean))
-```
-\normalsize
-
-**Appendix 2**
-\footnotesize
-```{r echo=FALSE, message=FALSE, warning=FALSE}
-summary(lm(Resp ~ logwage * education, data = data_clean))
-summary(lm(Resp ~ logwage * jobclass, data = data_clean))
-summary(lm(Resp ~ logwage * health, data = data_clean))
-summary(lm(Resp ~ logwage * maritl, data = data_clean))
-summary(lm(Resp ~ logwage * health_ins, data = data_clean))
-```
-\normalsize
-
-**Appendix 3**
-```{r echo=FALSE, message=FALSE, warning=FALSE}
-m0 <- lm(Resp ~ age + maritl, data = data_clean)
-m1 <- lm(Resp ~ age * maritl, data = data_clean)
-anova(m0, m1)
-
-m2 <- lm(Resp ~ age + health, data = data_clean)
-m3 <- lm(Resp ~ age * health, data = data_clean)
-anova(m2, m3)
-
-m4 <- lm(Resp ~ age + health_ins, data = data_clean)
-m5 <- lm(Resp ~ age * health_ins, data = data_clean)
-anova(m4, m5)
-```
-
-**Appendix 4**
-```{r echo=FALSE, message=FALSE, warning=FALSE}
-m0 <- lm(Resp ~ logwage + health_ins, data = data_clean)
-m1 <- lm(Resp ~ logwage * health_ins, data = data_clean)
-anova(m0, m1)
-
-m2 <- lm(Resp ~ logwage + maritl, data = data_clean)
-m3 <- lm(Resp ~ logwage * maritl, data = data_clean)
-anova(m2, m3)
-```
-
-**Appendix 5**
 
 ```{r echo=FALSE, message=FALSE, warning=FALSE, fig.width=3, fig.height=2.5}
 numeric_vars <- data_clean %>% select(where(is.numeric))
@@ -1286,14 +1196,14 @@ corrplot(corr_matrix,
 )
 ```
 
-**Appendix 6**
+**Appendix 2**
 
 ```{r echo=FALSE, message=FALSE, warning=FALSE, fig.width=6, fig.height=3}
 numeric_cols <- names(data_clean)[sapply(data_clean, is.numeric)]
 pairs(data_clean[, numeric_cols], pch = 20, cex = 0.3, col = "darkblue")
 ```
 
-**Appendix 7**
+**Appendix 3**
 
 ```{r echo=FALSE, message=FALSE, warning=FALSE, fig.width=8, fig.height=4}
 
@@ -1312,13 +1222,4 @@ plot_list <- lapply(cat_vars, function(v) {
 })
 wrap_plots(plot_list, nrow = 2, ncol = 3)
 ```
-
-
-**Appendix 8**
-
-**Appendix 9**
-
-**Appendix 10**
-
-**Appendix 11**
 
