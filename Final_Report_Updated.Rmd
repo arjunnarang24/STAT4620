@@ -597,7 +597,7 @@ poly_subset_results %>%
 
 ```
 
-### 4.2.2 Generalized Addative Models (GAM):
+### 4.2.2 Generalized Additive Models (GAM):
 
 GAMs were introduced to address the limitations of polynomial models by learning smooth, data-driven functions rather than relying on fixed polynomial shapes, allowing flexible nonlinear modeling while maintaining interpretability. They also permit different smooths by marital status, aligning with previously observed interaction effects, and the model was later expanded to include additional categorical predictors such as education, race, and job class. A GAM was then fitted to replicate the baseline structure of the polynomial models using  $\log(\text{wage})$ and Age with their marital-status interactions. Unlike polynomial regression, **GAM uses smoothing splines to provide a flexible, non-parametric fit that better captures nonlinear patterns without imposing a global functional form**. The **best model** employed smoothing splines for $\log(\text{wage})$ and $\text{age}$, with smooth functions varying by marital status (referred to as gam12 in the internal analysis):
  
@@ -686,7 +686,7 @@ Similar to polynomial regression, these results suggest that the GAM framework b
 
 ### Comparison to Polynomial Regression
 
-Compared to the polynomial regression models, the GAM produced slightly higher Test MSE, likely because its smoother spline-based functions constrain flexibility and introduce bias by not attempting to capture sharp curvature in the data. This slight increase in bias does result in a slightly lower residual variance, as observed in table 8. The best polynomial model achieves slightly lower test MSE (0.976 vs 0.986) and lower 10-fold CV MSE (1.031 vs 1.056) than the GAM, indicating marginally better out-of-sample performance and stability with fewer effective degrees of freedom (22 vs 31.11). Although the GAM attains a very slightly lower residual variance, this comes at the cost of greater complexity, so the polynomial model offers a better balance of accuracy, parsimony, and interpretability.
+Compared to the polynomial regression models, the GAM produced slightly higher Test MSE, likely because its smoother spline-based functions allows for flexibility by attempting to capture curvature in the data. This slight decrease in bias does result in a slightly lower residual variance, as observed in Table 8. The best polynomial model achieves slightly lower test MSE (0.976 vs 0.986) and lower 10-fold CV MSE (1.031 vs 1.056) than the GAM, indicating marginally better out-of-sample performance and stability with fewer effective degrees of freedom (22 vs 31.11). Although the GAM attains a very slightly lower residual variance, this comes at the cost of greater complexity, so the polynomial model offers a better balance of accuracy, parsimony, and interpretability.
 
 ```{r, echo = FALSE, include = FALSE, warning = FALSE, message = FALSE}
 # Best GAM with all categorical predictors
@@ -1077,15 +1077,14 @@ tree_results_full <- data.frame(
 tree_results_full[order(tree_results_full$Test_MSE), ]
 ```
 
-
 ```{r, echo = FALSE, warning = FALSE}
 # Your tree_results_full data frame (from earlier)
 tree_results_full <- data.frame(
   Model             = c("CART (Pruned)", "Bagging", "Random Forest", "Boosting"),
-  Test_MSE          = c(3.527937, 1.471860, 1.603544, 1.419123),
-  CV_MSE            = c(4.252760, 1.596224, 1.512284, 1.640975),
-  Residual_Variance = c(3.4277357, 0.3190218, 0.3627335, 1.1903342),
-  Effective_DF      = c(8.000, 2233.342, 2239.581, 9834.000)
+  Test_MSE          = c(3.527937, 1.506307, 1.676172, 1.390001),
+  CV_MSE            = c(4.213936, 1.577731, 1.583218, 1.564685),
+  Residual_Variance = c(3.4277357, 0.3431415, 0.4757296, 1.2120234),
+  Effective_DF      = c(8.000, 2234.716, 2234.308, 9990.000)
 )
 
 # Round values for presentation
@@ -1102,11 +1101,11 @@ kable(tree_results_rounded,
 ```
 Looking at the table above, we can see that Boosting has the lowest Test MSE, but not the lowest CV MSE, residual variance, or effective degrees of freedom.
 
-- CV MSE: Random Forest has the lowest (1.512), slightly better than Boosting (1.641).
-- Residual Variance: Bagging and Random Forest have much lower values (0.319 and 0.363), indicating they fit the training data better than Boosting (1.190).
-- Effective Degrees of Freedom: CART (Pruned) is by far the simplest, with only 8, while Boosting is the most complex (9834).
+- **CV MSE:** **Boosting** has the **lowest (1.565)**, which is better than Bagging (1.578) and Random Forest (1.583).
+- **Residual Variance:** **Bagging** and **Random Forest** have much lower values (0.343 and 0.476), indicating they fit the training data better than Boosting (1.212).
+- **Effective Degrees of Freedom:** **CART (Pruned)** is by far the simplest, with only **8.000**, while **Boosting** is the most complex **(9990.000)**.
 
-So, Boosting is best for predicting on new data (lowest Test MSE), but it is more complex and has higher training error than Bagging and Random Forest. The low residual variance and CV MSE for Bagging and Random Forest suggest they may be more stable and less prone to overfitting, but they don't generalize quite as well to the test set as Boosting in this case. CART, although by far the simplest, performed the worst among the four tree-based methods. 
+So, **Boosting** is best for predicting on new data (lowest Test MSE), but it is more complex and has higher training error than Bagging and Random Forest. The low residual variance and CV MSE for Bagging and Random Forest suggest they may be more stable and less prone to overfitting, but they don't generalize quite as well to the test set as Boosting in this case. CART, although by far the simplest, performed the worst among the four tree-based methods. 
 
 ### Pros and Cons of Tree Based methods:
 
@@ -1128,7 +1127,7 @@ best_models <- data.frame(
     round(mse_gam_best_full, 3),
     round(boost_test_mse, 3)
   ),
-  check.names = FALSE,  # <— this stops R from fixing the names
+  check.names = FALSE,
   "10 fold CV MSE" = c(
     round(poly_cv_val, 3),
     round(gam_cv_val, 3),
@@ -1222,4 +1221,3 @@ plot_list <- lapply(cat_vars, function(v) {
 })
 wrap_plots(plot_list, nrow = 2, ncol = 3)
 ```
-
